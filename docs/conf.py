@@ -1,0 +1,11 @@
+project = "AI-классификатор КТРУ"
+author = "Команда хакатона B2B-РТС"
+language = "ru"
+extensions = ["myst_parser", "sphinxcontrib.openapi", "sphinx.ext.todo"]
+source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
+myst_enable_extensions = ["colon_fence", "deflist"]
+myst_heading_anchors = 3
+exclude_patterns = ["_build"]
+html_theme = "furo"
+html_static_path = ["_static"]
+suppress_warnings = ["myst.header"]
