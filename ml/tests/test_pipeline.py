@@ -104,3 +104,38 @@ def test_rounded_confidences_sum_at_most_one(fixture_pipeline):
 def test_no_key_default_mode_is_normal(fixture_pipeline):
     (r,) = _run(fixture_pipeline, "Принтер лазерный")
     assert r.mode == "normal"
+
+
+class _FakeEmbedder:
+    """Детерминированные «эмбеддинги» по буквам — проверяем путь с векторами без скачивания модели."""
+
+    model_name = "fake/letters"
+    calls = 0
+
+    def embed(self, texts, kind="query"):
+        import numpy as np
+
+        _FakeEmbedder.calls += 1
+        out = []
+        for t in texts:
+            v = np.zeros(64, dtype=np.float32)
+            for ch in t.lower():
+                v[ord(ch) % 64] += 1.0
+            out.append((v / (np.linalg.norm(v) or 1.0)).tolist())
+        return out
+
+
+def test_dense_retrieval_and_embedding_cache(tmp_path):
+    from ml.catalog import Catalog, entry_from_row
+    from ml.charmatch import CharMatcher
+    from ml.retrieve import MemoryRetriever
+
+    from conftest import SYNTH_ROWS
+
+    catalog = Catalog([entry_from_row(r) for r in SYNTH_ROWS])
+    first = MemoryRetriever(catalog, CharMatcher(catalog), _FakeEmbedder(), cache_dir=tmp_path)
+    assert first.dense is not None and list(tmp_path.glob("catalog_fake__letters_*.npy"))
+    calls = _FakeEmbedder.calls
+    second = MemoryRetriever(catalog, CharMatcher(catalog), _FakeEmbedder(), cache_dir=tmp_path)
+    assert _FakeEmbedder.calls == calls  # каталог взят из кэша, не пересчитан
+    assert (second.dense == first.dense).all()

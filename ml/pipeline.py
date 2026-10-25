@@ -78,7 +78,7 @@ class KtruPipeline:
             from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
 
             embedder = SentenceTransformerEmbedder(self.settings.embedder_model, self.settings.device)
-        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder)
+        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder, cache_dir=self.settings.embed_cache_dir)
         self.extractor = extractor or RulesExtractor()
         if reranker is not None:
             self.reranker, rerank_degraded = reranker, False

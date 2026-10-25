@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from contracts.ml_contracts import ExtractedAttributes, RawItem
@@ -115,15 +116,61 @@ def _extract_name(source: str) -> str:
     return name or head.strip()[:80]
 
 
+# Словарь марок из карточек СТЕ (ml/build_brands.py): ~30 тыс. написаний, ищутся по словам текста.
+_LEXICON_PATH = Path(__file__).resolve().parent / "models" / "brands.txt"
+_LEXICON: Optional[dict[str, str]] = None
+_LEX_MAX_WORDS = 4
+_WORD = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9&.+'\-]*")
+
+
+def _lexicon() -> dict[str, str]:
+    global _LEXICON
+    if _LEXICON is None:
+        _LEXICON = {}
+        if _LEXICON_PATH.exists():
+            for line in _LEXICON_PATH.read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#"):
+                    brand = line.split("	", 1)[0]
+                    _LEXICON.setdefault(brand.lower(), brand)
+    return _LEXICON
+
+
+def _lexicon_brand(text: str, spans: list[tuple[int, int]]) -> Optional[tuple[int, int, int, str]]:
+    """Самая ранняя марка из словаря СТЕ: (начало, -длина, конец, написание из текста)."""
+    lex = _lexicon()
+    if not lex:
+        return None
+    words = [(m.start(), m.end()) for m in _WORD.finditer(text)]
+    for i, (start, _) in enumerate(words):
+        if _in_spans(start, spans):
+            continue
+        for n in range(min(_LEX_MAX_WORDS, len(words) - i), 0, -1):
+            end = words[i + n - 1][1]
+            piece = text[start:end]
+            key = " ".join(piece.lower().split()).strip(".")
+            if key in lex and key not in NOT_BRAND_WORDS:
+                # Одно кириллическое слово строчными («ресурс», «гамма») — обычное слово, а не марка.
+                if n == 1 and re.match(r"[а-яё]", piece):
+                    continue
+                return start, -(end - start), start + len(piece.rstrip(".")), piece.rstrip(".")
+    return None
+
+
 def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, float, Optional[int]]:
     """→ (бренд, модель, уверенность бренда, уверенность модели, позиция бренда в тексте)."""
     spans = _segments_excluding_compat(text)
+    found = []  # (начало, -длина, конец, написание)
     for m in _BRAND_RE.finditer(text):
-        if _in_spans(m.start(), spans):
-            continue
-        model = _model_after(text[m.end():])
+        if not _in_spans(m.start(), spans):
+            found.append((m.start(), -(m.end() - m.start()), m.end(), BRANDS[m.group(1).lower()]))
+            break
+    if (hit := _lexicon_brand(text, spans)) is not None:
+        found.append(hit)
+    if found:
+        start, _, end, brand = min(found)  # самая ранняя марка, при равенстве — длинная
+        model = _model_after(text[end:])
         conf_model = 0.85 if model and _looks_like_model(model) else 0.5
-        return BRANDS[m.group(1).lower()], model, 0.95, conf_model, m.start()
+        return brand, model, 0.95, conf_model, start
     # Марки нет в словаре — ищем самое раннее «марочное» слово: латиница с заглавной или капсом
     # (Rommelsbacher, REXANT, AvtoPoryadok), либо кириллица капсом (ПРАКТИК, МОНЕТНЫЙ ДВОР).
     candidates = []

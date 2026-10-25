@@ -52,6 +52,8 @@ class Settings:
     catalog_path: str = field(default_factory=lambda: _env("KTRU_CATALOG_PATH"))
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(MODELS / "calibrator.joblib")))
+    # Кэш эмбеддингов каталога; в docker-compose — том /data/models (переживает перезапуск воркера).
+    embed_cache_dir: str = field(default_factory=lambda: _env("EMBED_CACHE_DIR", str(ARTIFACTS / "embeddings")))
     llm_cache_path: str = field(default_factory=lambda: _env("LLM_CACHE_PATH", str(ARTIFACTS / "llm_cache.jsonl")))
     # Доля оценки реранкера в итоговом балле на пути rerank. Малая: Jev разрешает ничьи, а не перекрывает сверку
     # характеристик (на dev вес 0.25–0.75 исправлял и портил поровну, см. ml/CLAUDE.md).
