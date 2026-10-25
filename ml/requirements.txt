@@ -5,6 +5,7 @@ scikit-learn
 rapidfuzz
 joblib
 httpx          # Jev через OpenRouter (RERANKER=llm)
+pyarrow        # ml.fetch_catalog: официальный КТРУ из parquet (Hugging Face)
 pytest
 
 # Опционально: эмбеддер (EMBEDDER_MODEL) и cross-encoder (RERANKER=cross_encoder)
