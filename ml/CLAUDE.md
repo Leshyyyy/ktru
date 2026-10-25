@@ -22,10 +22,27 @@
 
 ```bash
 python -m pytest ml/tests -q
-python -m ml.synth --candidates data/ktru/ktru_data/eval_dev_candidates.jsonl --out data/ktru/eval/dev_synth.jsonl
-python -m ml.calibrate --data data/ktru/eval/dev_synth.jsonl
-python -m ml.evaluate --data data/ktru/eval/dev_synth.jsonl --split dev
+python -m ml.calibrate --data data/ktru/eval/eval_samples_dev.jsonl            # обучение калибратора только на dev
+python -m ml.evaluate --data data/ktru/eval/eval_samples_dev.jsonl --split dev
+python -m ml.evaluate --data data/ktru/eval/eval_samples_test.jsonl --split test  # редко, ничего под test не подбирать
 ```
+
+Ключи — в `ml/.env` (образец `ml/.env.example`, сам файл в `.gitignore`). `RERANKER=llm` включает Jev через OpenRouter,
+ответы кэшируются в `ml/artifacts/llm_cache.jsonl`, повторные прогоны бесплатны.
+
+## Текущие цифры (разметка Егора `synthetic-claude-v1`, RERANKER=none, без ключей)
+
+| Набор | top-1 | любой допустимый | ОКПД2 | top-3 | атрибуты | ECE | с / 1000 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| dev, 210 | 94,3% | 97,1% | 99,5% | 98,6% | 96,2% | 0,052 | ~10 |
+| test, 87 (один прогон 25.10) | 95,4% | 96,6% | 100% | 98,9% | 95,6% | 0,036 | ~9 |
+
+Тексты синтетические и написаны по характеристикам каталога — на живых заявках точность будет ниже (см. EVAL_SAMPLES.md).
+Калибратор обучен на dev; честная ECE на отложенных половинах dev — 0,058–0,066.
+
+**Jev (RERANKER=llm) на dev:** с весом 0,25–0,75 исправляет и портит поровну (7/7), с весом 0,03 — +2 позиции, в пределах шума.
+На текстах из характеристик сверка в `charmatch.py` сильнее; по умолчанию вес 0,05 (разрешение ничьих).
+Проверять Jev заново, когда появятся живые формулировки из ЕИС.
 
 ## Правила
 

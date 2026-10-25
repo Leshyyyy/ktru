@@ -7,8 +7,12 @@ llm            — Jev (TypeSafe) через OpenRouter: choice среди ка�
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from contracts.ml_contracts import Candidate, ExtractedAttributes, RerankResult
 
@@ -54,12 +58,22 @@ class JevReranker:
     name = "llm"
     URL = "https://openrouter.ai/api/alpha/decisions"
 
-    def __init__(self, api_key: str, model: str, timeout: float = 10.0, workers: int = 8):
+    def __init__(self, api_key: str, model: str, timeout: float = 10.0, workers: int = 8,
+                 cache_path: str | Path | None = None):
         import httpx  # noqa: PLC0415
 
         self.client = httpx.Client(timeout=timeout, headers={"Authorization": f"Bearer {api_key}"})
         self.model = model
         self.workers = workers
+        # Кэш ответов на диске: повторный прогон и «Повторить» не платят за те же вопросы дважды.
+        self.cache_path = Path(cache_path) if cache_path else None
+        self._cache: dict[str, dict] = {}
+        self._lock = threading.Lock()
+        if self.cache_path and self.cache_path.exists():
+            for line in self.cache_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    rec = json.loads(line)
+                    self._cache[rec["key"]] = rec["probs"]
 
     def _one(self, text: str, cands: list[Candidate]) -> RerankResult:
         top = cands[:RERANK_TOP]
@@ -78,10 +92,14 @@ class JevReranker:
                 }
             },
         }
+        key = hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         try:
-            r = self.client.post(self.URL, json=body)
-            r.raise_for_status()
-            probs = r.json()["answers"]["ktru"]["probabilities"]
+            probs = self._cache.get(key)
+            if probs is None:
+                r = self.client.post(self.URL, json=body)
+                r.raise_for_status()
+                probs = r.json()["answers"]["ktru"]["probabilities"]
+                self._remember(key, probs)
             order = sorted(top, key=lambda c: -float(probs.get(c.ktru_code, 0.0)))
             return RerankResult(
                 ordered_codes=[c.ktru_code for c in order],
@@ -90,6 +108,14 @@ class JevReranker:
         except Exception as e:  # сеть, лимиты, формат ответа — не роняем позицию
             log.warning("Jev недоступен: %s", e)
             return fallback
+
+    def _remember(self, key: str, probs: dict) -> None:
+        with self._lock:
+            self._cache[key] = probs
+            if self.cache_path:
+                self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.cache_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"key": key, "probs": probs}, ensure_ascii=False) + "\n")
 
     def rerank_batch(self, pairs, texts: list[str] | None = None) -> list[RerankResult]:
         texts = texts or [a.name for a, _ in pairs]
@@ -101,7 +127,7 @@ def make_reranker(settings) -> tuple[object, bool]:
     """→ (реранкер, degraded). degraded = нужен был LLM-реранкер, но ключа нет."""
     if settings.reranker == "llm":
         if settings.llm_api_key:
-            return JevReranker(settings.llm_api_key, settings.jev_model), False
+            return JevReranker(settings.llm_api_key, settings.jev_model, cache_path=settings.llm_cache_path), False
         log.warning("RERANKER=llm, но LLM_API_KEY не задан — работаю без реранкера")
         return NoneReranker(), True
     if settings.reranker == "cross_encoder":

@@ -44,7 +44,7 @@ def evaluate(samples: list[dict], pipe: KtruPipeline) -> dict:
     results = pipe.classify_batch(items, "", PipelineOptions(use_feedback=False))
     seconds = time.perf_counter() - t0
 
-    top1 = top3 = okpd = fast = 0
+    top1 = top3 = okpd = fast = any_valid = 0
     conf, correct, errors = [], [], []
     attr_ok = attr_n = 0
     attr_field = defaultdict(lambda: [0, 0])
@@ -54,6 +54,8 @@ def evaluate(samples: list[dict], pipe: KtruPipeline) -> dict:
         codes = [p.ktru_code for p in r.predictions]
         hit1 = bool(codes) and codes[0] == gold
         top1 += hit1
+        valid = {gold, *s.get("alt_valid_codes", [])}
+        any_valid += bool(codes) and codes[0] in valid
         top3 += gold in codes[:3]
         okpd += bool(codes) and codes[0].split("-")[0] == gold.split("-")[0]
         fast += r.path == "fast"
@@ -79,6 +81,7 @@ def evaluate(samples: list[dict], pipe: KtruPipeline) -> dict:
     return {
         "samples": n,
         "top1_full_code": round(top1 / n, 4),
+        "top1_any_valid": round(any_valid / n, 4),
         "top1_okpd2": round(okpd / n, 4),
         "top3": round(top3 / n, 4),
         "top1_macro_by_okpd2": round(sum(groups.values()) / len(groups), 4) if groups else None,
@@ -109,7 +112,7 @@ def main() -> None:
     out.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
     cal = "обученный" if getattr(pipe.calibrator, "fitted", False) else "эвристика"
     print(f"split={args.split}  позиций={m['samples']}  реранкер={pipe.reranker.name}  калибратор={cal}")
-    for k in ("top1_full_code", "top1_okpd2", "top3", "top1_macro_by_okpd2", "attributes_accuracy", "ece",
+    for k in ("top1_full_code", "top1_any_valid", "top1_okpd2", "top3", "top1_macro_by_okpd2", "attributes_accuracy", "ece",
               "fast_path_share", "seconds_per_1000"):
         print(f"  {k:22} {m[k]}")
     print(f"  по полям атрибутов     {m['attributes_by_field']}")

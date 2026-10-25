@@ -82,3 +82,14 @@ def test_required_missing_flag_and_explanation(synth_pipeline):
     assert r.predictions[0].explanation
     for p in r.predictions[1:]:
         assert p.why_not_chosen
+
+
+def test_query_interval_picks_matching_range(synth_pipeline):
+    (r,) = _run(synth_pipeline, "Шприц одноразовый, объем от 3 до 5 мл")
+    assert r.predictions[0].ktru_code == "77.77.02.000-00000005"
+
+
+def test_missing_required_does_not_push_to_other_group(synth_pipeline):
+    # У «Иглы спинальной» обязательная характеристика не указана — это не повод уходить в другую группу.
+    (r,) = _run(synth_pipeline, "Игла спинальная")
+    assert r.predictions[0].okpd2_code == "77.77.04.000"

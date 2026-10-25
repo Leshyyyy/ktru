@@ -189,8 +189,7 @@ class KtruPipeline:
         second = r.candidates[1].final if len(r.candidates) > 1 else 0.0
         return not (top >= opts.fast_path_min_score and top - second >= opts.fast_path_min_margin)
 
-    @staticmethod
-    def _apply_rerank(r: Ranked, rr) -> None:
+    def _apply_rerank(self, r: Ranked, rr) -> None:
         score = dict(zip(rr.ordered_codes, rr.scores))
         if not score:
             return
@@ -198,7 +197,8 @@ class KtruPipeline:
         for s in r.candidates:
             raw = score.get(s.ktru_code)
             s.rerank = 0.0 if raw is None or hi == lo else (raw - lo) / (hi - lo)
-            s.final = 0.5 * s.final + 0.5 * s.rerank
+            w = self.settings.rerank_weight
+            s.final = (1 - w) * s.final + w * s.rerank
         r.candidates.sort(key=lambda s: -s.final)
 
     def _features(self, r: Ranked, use_feedback: bool) -> None:

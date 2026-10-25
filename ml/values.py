@@ -171,6 +171,8 @@ class QueryNumber:
     unit: Optional[str]
     start: int
     end: int
+    # Для «от 12 до 13», «14-15», «не менее 17», «< 10» — интервал из текста; для голого числа — None.
+    interval: Optional[Range] = None
 
 
 def _match_unit(s: str, pos: int) -> tuple[Optional[str], int]:
@@ -189,13 +191,89 @@ def _match_unit(s: str, pos: int) -> tuple[Optional[str], int]:
 
 
 # Число не должно быть хвостом слова или модели: «M6700», «KD-178», «i5».
-_NUM_FIND = re.compile(r"(?<![\w.,\-/])(\d+(?:[.,]\d+)?)")
+_LEAD = r"(?<![\w.,\-/])"
+_N = r"(\d+(?:[.,]\d+)?)"
+_NUM_FIND = re.compile(_LEAD + _N)
+
+# Порядок важен: «не более» раньше «более», «не менее» раньше «менее», «>=» раньше «>».
+_INTERVALS = [
+    (re.compile(rf"(?<![а-я])от\s*{_N}\s*(?:[^\d\s;,]{{1,8}}\s*)?до\s*{_N}"), "range"),
+    (re.compile(rf"{_LEAD}{_N}\s*[-–—]\s*{_N}"), "range"),
+    (re.compile(rf"(?:не\s+менее|не\s+меньше|не\s+ниже|>=|≥|(?<![а-я])от)\s*{_N}"), "lo_inc"),
+    (re.compile(rf"(?:не\s+более|не\s+больше|не\s+выше|<=|≤|(?<![а-я])до)\s*{_N}"), "hi_inc"),
+    (re.compile(rf"(?:(?<![а-я])более|(?<![а-я])больше|свыше|>)\s*{_N}"), "lo_exc"),
+    (re.compile(rf"(?:(?<![а-я])менее|(?<![а-я])меньше|<)\s*{_N}"), "hi_exc"),
+]
+
+
+def _interval(kind: str, a: float, b: Optional[float]) -> Range:
+    if kind == "range":
+        return Range(min(a, b), True, max(a, b), True)
+    return {
+        "lo_inc": Range(lo=a, lo_inc=True),
+        "lo_exc": Range(lo=a, lo_inc=False),
+        "hi_inc": Range(hi=a, hi_inc=True),
+        "hi_exc": Range(hi=a, hi_inc=False),
+    }[kind]
 
 
 def find_numbers(text_lower: str) -> list[QueryNumber]:
-    """Все числа в тексте позиции с единицей, если она стоит сразу после числа."""
-    out = []
+    """Числа и интервалы в тексте позиции с единицей, если она стоит сразу после последнего числа."""
+    out: list[QueryNumber] = []
+    taken: set[int] = set()  # начала чисел, уже вошедших в интервал
+    for pattern, kind in _INTERVALS:
+        for m in pattern.finditer(text_lower):
+            starts = [m.start(g) for g in range(1, (m.lastindex or 0) + 1)]
+            if any(st in taken for st in starts):
+                continue
+            nums = [to_float(m.group(g)) for g in range(1, (m.lastindex or 0) + 1)]
+            unit, end = _match_unit(text_lower, m.end())
+            rng = _interval(kind, nums[0], nums[1] if len(nums) > 1 else None)
+            mid = nums[0] if len(nums) == 1 else (nums[0] + nums[1]) / 2
+            out.append(QueryNumber(mid, unit, m.start(), end if unit else m.end(), rng))
+            taken.update(starts)
     for m in _NUM_FIND.finditer(text_lower):
+        if m.start() in taken:
+            continue
         unit, end = _match_unit(text_lower, m.end())
         out.append(QueryNumber(to_float(m.group(1)), unit, m.start(), end if unit else m.end()))
-    return out
+    return sorted(out, key=lambda n: n.start)
+
+
+def _max_lo(a, ai, b, bi):
+    if a is None:
+        return b, bi
+    if b is None or a > b:
+        return a, ai
+    if b > a:
+        return b, bi
+    return a, ai and bi
+
+
+def _min_hi(a, ai, b, bi):
+    if a is None:
+        return b, bi
+    if b is None or a < b:
+        return a, ai
+    if b < a:
+        return b, bi
+    return a, ai and bi
+
+
+def _side(a, ai, b, bi) -> float:
+    if a is None and b is None:
+        return 1.0
+    if a is None or b is None:
+        return 0.4
+    if a == b:
+        return 1.0 if ai == bi else 0.9
+    return max(0.0, 1.0 - 3.0 * abs(a - b) / max(abs(a), abs(b), 1e-9))
+
+
+def interval_match(q: Range, c: Range) -> Optional[float]:
+    """Интервал из текста против условия КТРУ: None — не пересекаются, иначе близость границ 0..1."""
+    lo, lo_inc = _max_lo(q.lo, q.lo_inc, c.lo, c.lo_inc)
+    hi, hi_inc = _min_hi(q.hi, q.hi_inc, c.hi, c.hi_inc)
+    if lo is not None and hi is not None and (lo > hi or (lo == hi and not (lo_inc and hi_inc))):
+        return None
+    return (_side(q.lo, q.lo_inc, c.lo, c.lo_inc) + _side(q.hi, q.hi_inc, c.hi, c.hi_inc)) / 2

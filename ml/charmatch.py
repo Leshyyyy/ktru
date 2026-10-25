@@ -14,7 +14,7 @@ from typing import Optional
 from contracts.ml_contracts import CharacteristicMatch
 
 from .catalog import Catalog, CatalogChar, CatalogEntry
-from .values import QueryNumber, Range, Text, find_numbers, norm_text
+from .values import QueryNumber, Range, Text, find_numbers, interval_match, norm_text
 
 W_REQUIRED = 1.0
 W_OPTIONAL = 0.35
@@ -36,13 +36,21 @@ def _norm(s: str) -> str:
 
 
 def _stem(word: str) -> str:
-    return word if len(word) <= 5 else word[: max(5, len(word) - 2)]
+    """Грубая основа русского слова: «иглой» и «игла» → «игл», «проводниковой» → «проводнико»."""
+    cut = 3 if len(word) >= 7 else (2 if len(word) >= 5 else 1)
+    return word[: max(3, len(word) - cut)]
 
 
 def _anchor_stems(name: str) -> list[str]:
     words = [w for w in re.findall(r"[а-яa-z]+", _norm(name)) if len(w) >= 4]
     specific = [w for w in words if w not in GENERIC_WORDS]
-    return [_stem(w) for w in (specific or words)]
+    return list(dict.fromkeys(_stem(w) for w in (specific or words)))
+
+
+# Единица после запятой в названии характеристики: «…воздуха, л/мин 840», «диапазон, нм 520-546».
+_UNIT_AFTER_COMMA = re.compile(r"\s*,\s*([a-zа-я/°%0-9]{1,8})(?=[\s:])")
+_UNIT_WORDS = {"л/мин", "нм", "дан", "мс", "кд/м2", "g", "град", "мкм", "кпа", "па", "%", "мм", "см", "кг", "шт",
+               "ч", "с", "мин", "вт", "гц", "мгц", "бит", "дб", "мл", "л", "г", "м"}
 
 
 @dataclass
@@ -54,22 +62,41 @@ class QueryContext:
     def anchor(self, stems: list[str]) -> Optional[tuple[int, int]]:
         """Где в тексте упомянута характеристика: (начало, конец) группы её слов.
 
-        Берём место, где рядом встретилось больше всего слов названия: «Проводниковая игла: нет» —
-        это характеристика, а «Игла спинальная» в начале — название товара.
+        Берём место, где рядом стоят разные слова названия (для каждого слова — ближайшее вхождение):
+        «Проводниковая игла: нет» — это характеристика, а «Игла спинальная» в начале — название товара.
+        Если в названии больше одного значимого слова, одного совпадения мало: «мягкого сиденья»
+        не должно считаться упоминанием «мягкой спинки».
         """
         key = tuple(stems)
         if key not in self._anchor_cache:
-            hits = []
-            for st in set(stems):
+            hits: dict[str, list[tuple[int, int]]] = {}
+            for st in stems:
                 for m in re.finditer(rf"(?<![а-яa-z]){re.escape(st)}[а-яa-z]*", self.text):
-                    hits.append((m.start(), m.end(), st))
+                    hits.setdefault(st, []).append((m.start(), m.end()))
+            need = min(2, len(stems))
             best = None
-            for s, e, st in hits:
-                near = [h for h in hits if abs(h[0] - s) <= ANCHOR_CLUSTER]
-                score = (len({h[2] for h in near}), len(st), -s)
-                if best is None or score > best[0]:
-                    best = (score, min(h[0] for h in near), max(h[1] for h in near))
-            self._anchor_cache[key] = (best[1], best[2]) if best else None
+            for st, occ in hits.items():
+                for s, e in occ:
+                    cluster = [(s, e)]
+                    for other, other_occ in hits.items():
+                        if other == st:
+                            continue
+                        near = min(other_occ, key=lambda h: abs(h[0] - s))
+                        if abs(near[0] - s) <= ANCHOR_CLUSTER:
+                            cluster.append(near)
+                    if len(cluster) < need:
+                        continue
+                    score = (len(cluster), len(st), -s)
+                    if best is None or score > best[0]:
+                        best = (score, min(h[0] for h in cluster), max(h[1] for h in cluster))
+            if best:
+                start, end = best[1], best[2]
+                m = _UNIT_AFTER_COMMA.match(self.text, end)
+                if m and (m.group(1) in _UNIT_WORDS or "/" in m.group(1)):
+                    end = m.end()
+                self._anchor_cache[key] = (start, end)
+            else:
+                self._anchor_cache[key] = None
         return self._anchor_cache[key]
 
 
@@ -124,26 +151,30 @@ class CharMatcher:
                 best = None
                 for n in nums:
                     for r in ranges:
-                        if r.contains(n.value):
-                            qual = r.quality(n.value)
-                            if best is None or qual > best[1]:
-                                best = (n, qual)
+                        if n.interval is not None:
+                            qual = interval_match(n.interval, r)
+                        else:
+                            qual = r.quality(n.value) if r.contains(n.value) else None
+                        if qual is not None and (best is None or qual > best[1]):
+                            best = (n, qual)
                 if best:
                     return "match", _span(q, best[0]), best[1]
                 return "mismatch", _span(q, nums[0]), 0.0
 
         if texts:
+            # Чем шире список допустимых значений, тем слабее совпадение говорит именно об этой позиции.
+            breadth = 1.0 if len(texts) == 1 else max(0.6, 1.0 - 0.08 * (len(texts) - 1))
             yes_no = {t.norm for t in texts} & {"да", "нет"}
             if yes_no:
                 if anchor:
                     before = q.text[max(0, anchor[0] - 5):anchor[0]]
                     after = q.text[anchor[1]:anchor[1] + 8]
                     said = "нет" if ("без" in before or re.match(r"\s*:?\s*нет", after)) else "да"
-                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), 1.0
+                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), breadth
                 return "missing", None, 0.0
             for t in texts:
                 if self._contains(q.text, t.norm):
-                    return "match", t.raw, 1.0
+                    return "match", t.raw, breadth
             # В тексте значение этой характеристики, которого нет у позиции: другой формат, другой тип.
             own = {t.norm for t in texts}
             for other in self.vocab.get(char.name, ()):
@@ -163,10 +194,12 @@ class CharMatcher:
             w = W_REQUIRED if c.required else W_OPTIONAL
             if c.required:
                 n_req += 1
-                den += w
                 req_ok += status == "match"
                 req_missing |= status == "missing"
-            elif status != "missing":
+            # Не указанная в тексте характеристика не голосует ни за, ни против: внутри группы она одинакова
+            # у всех соседей, а между группами наказывала бы позиции с большим числом обязательных полей
+            # (монитор с тремя обязательными проигрывал моноблоку с одной). Её отсутствие — флаг required_missing.
+            if status != "missing":
                 den += w
             if status == "match":
                 num += w * qual

@@ -32,3 +32,16 @@ def test_name_with_lowercase_clarification():
 def test_quantity_and_unit_from_columns():
     a = _x("Бумага офисная А4", name="Бумага офисная А4", quantity="1 200", unit="пач")
     assert a.quantity == 1200 and a.unit == "пач" and a.field_confidence["name"] >= 0.9
+
+
+def test_multiword_and_cyrillic_brands():
+    a = _x("Ручка канцелярская Erich Krause. вид: Шариковая; ручка автоматическая: да")
+    assert (a.name, a.brand, a.model) == ("Ручка канцелярская", "Erich Krause", None)
+    b = _x("Бумага для офисной техники Снегурочка. формат: А4")
+    assert (b.name, b.brand) == ("Бумага для офисной техники", "Снегурочка")
+
+
+def test_trailing_number_in_model_and_latin_in_name():
+    assert _x("Системный блок iRU Office 313. объем оперативной памяти: не менее 8 ГБ").model == "Office 313"
+    a = _x("USB-ресивер для беспроводной связи A4Tech Unifying, дальность действия не менее 10 м")
+    assert (a.name, a.brand, a.model) == ("USB-ресивер для беспроводной связи", "A4Tech", "Unifying")

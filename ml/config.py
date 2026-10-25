@@ -12,6 +12,23 @@ FIXTURE_CATALOG = REPO_ROOT / "contracts" / "fixtures" / "fake_catalog.jsonl"
 ARTIFACTS = REPO_ROOT / "ml" / "artifacts"
 
 
+def load_dotenv(*paths: Path) -> None:
+    """Подхватить KEY=VALUE из .env-файлов. Уже заданные переменные окружения не перезаписываются."""
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+# ml/.env — локальные ключи разработчика (в .gitignore); корневой .env — общий для docker-compose.
+load_dotenv(REPO_ROOT / "ml" / ".env", REPO_ROOT / ".env")
+
+
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
@@ -32,6 +49,10 @@ class Settings:
     catalog_path: str = field(default_factory=lambda: _env("KTRU_CATALOG_PATH"))
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(ARTIFACTS / "calibrator.joblib")))
+    llm_cache_path: str = field(default_factory=lambda: _env("LLM_CACHE_PATH", str(ARTIFACTS / "llm_cache.jsonl")))
+    # Доля оценки реранкера в итоговом балле на пути rerank. Малая: Jev разрешает ничьи, а не перекрывает сверку
+    # характеристик (на dev вес 0.25–0.75 исправлял и портил поровну, см. ml/CLAUDE.md).
+    rerank_weight: float = field(default_factory=lambda: float(_env("RERANK_WEIGHT", "0.05")))
 
     @property
     def llm_enabled(self) -> bool:

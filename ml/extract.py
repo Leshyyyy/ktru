@@ -25,8 +25,16 @@ BRANDS = {
         "SFM", "Apexmed", "Medline", "Polymed", "Romed", "Omron", "AND", "Microlife", "B.Well", "Little Doctor",
         "Mindray", "Philips", "Dräger", "Draeger", "Covidien", "Terumo", "Nipro", "Vitrum", "Bormioli", "Chairman",
         "Бюрократ", "Brabix", "Helmi", "Riva", "Metta", "Samurai",
+        # Многословные и кириллические марки: ищутся по тексту целиком, длинные — раньше коротких.
+        "Erich Krause", "Bruno Visconti", "Double A", "Little Doctor", "IQ Premium", "IQ Allround", "IQ Economy",
+        "IQ Color", "Ballet Classic", "Ballet Universal", "Ballet Premier", "Ballet Brilliant", "Снегурочка",
+        "Комус", "Офисмаг", "Гознак", "Альт", "Каляка-Маляка", "Луч", "Гамма", "Медполимер",
     )
 }
+_BRAND_RE = re.compile(
+    r"(?<![\w])(" + "|".join(re.escape(b) for b in sorted(BRANDS, key=len, reverse=True)) + r")(?![\w])",
+    re.I,
+)
 
 # Латинские слова, которые не являются брендом: интерфейсы, стандарты, технологии.
 TECH_WORDS = {
@@ -41,7 +49,7 @@ TECH_WORDS -= {"intel", "amd"}  # бывают брендами системны
 
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+\-./]*|\d+[A-Za-z][A-Za-z0-9\-]*")
 _COMPAT = re.compile(r"(совместим\w*\s+с|для\s+(?:принтер\w*|мфу|ноутбук\w*|аппарат\w*|картридж\w*|техники\s+[A-Z]))\s*", re.I)
-_NAME_STOP = re.compile(r"[,;:]|\s[-–—]\s")
+_NAME_STOP = re.compile(r"[,;:]|\.\s|\s[-–—]\s")
 
 
 def _segments_excluding_compat(text: str) -> list[tuple[int, int]]:
@@ -75,26 +83,31 @@ def _extract_name(source: str) -> str:
         return head.strip(" -–—.")
     words = []
     for w in head.split():
-        if re.search(r"[A-Za-z0-9\"№]", w):
+        # «USB-ресивер» — часть наименования (есть кириллица), «A4Tech», «15.6"», «M404» — уже нет.
+        if re.search(r"[A-Za-z0-9\"№]", w) and not re.search(r"[А-Яа-яЁё]", w):
             break
         words.append(w)
     name = " ".join(words).strip(" -–—.")
     return name or head.strip()[:80]
 
 
-def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, float]:
+def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, float, Optional[int]]:
+    """→ (бренд, модель, уверенность бренда, уверенность модели, позиция бренда в тексте)."""
     spans = _segments_excluding_compat(text)
+    for m in _BRAND_RE.finditer(text):
+        if _in_spans(m.start(), spans):
+            continue
+        model = _model_after(text[m.end():])
+        conf_model = 0.85 if model and _looks_like_model(model) else 0.5
+        return BRANDS[m.group(1).lower()], model, 0.95, conf_model, m.start()
     tokens = [(m.group(0), m.start(), m.end()) for m in _LATIN_TOKEN.finditer(text)]
     for i, (tok, start, end) in enumerate(tokens):
         if _in_spans(start, spans):
             continue
         key = tok.lower().strip(".")
-        known = key in BRANDS
-        # Неизвестный бренд: слово с заглавной буквы, только буквы, за ним идёт модель.
         # Неизвестный бренд: слово с заглавной буквы (не аббревиатура вроде SPI), за ним модель с цифрами.
         guessed = (
-            not known
-            and key not in TECH_WORDS
+            key not in TECH_WORDS
             and tok[:1].isupper()
             and tok.isalpha()
             and len(tok) >= 3
@@ -103,12 +116,10 @@ def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, f
             and re.search(r"\d", tokens[i + 1][0]) is not None
             and _adjacent(text, end, tokens[i + 1][1])
         )
-        if not (known or guessed):
-            continue
-        model = _model_after(text[end:])
-        brand = BRANDS.get(key, tok)
-        return brand, model, (0.95 if known else 0.6), (0.85 if model and _looks_like_model(model) else 0.5)
-    return None, None, 0.0, 0.0
+        if guessed:
+            model = _model_after(text[end:])
+            return tok, model, 0.6, (0.85 if model and _looks_like_model(model) else 0.5), start
+    return None, None, 0.0, 0.0, None
 
 
 _MODEL_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+\-./]*$")
@@ -117,9 +128,10 @@ _MODEL_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+\-./]*$")
 def _model_after(rest: str) -> Optional[str]:
     """Модель — латинские и цифровые слова сразу после бренда до запятой: «IdeaPad 3 15IAU7», «M6700DW».
 
-    Голое число берём, только если за ним снова латиница: «IdeaPad 3 15IAU7» — да, «Kingston 64 ГБ» — нет.
+    Голое число берём, если за ним снова латиница («IdeaPad 3 15IAU7») или оно последнее («Office 313»),
+    но не перед единицей («Kingston 64 ГБ»).
     """
-    words = re.split(r"[,;(]", rest, 1)[0].split()
+    words = re.split(r"[,;(]|\.\s", rest, 1)[0].split()
     parts: list[str] = []
     for j, w in enumerate(words):
         w = w.rstrip(".")
@@ -127,7 +139,10 @@ def _model_after(rest: str) -> Optional[str]:
             break
         if w.isdigit():
             nxt = words[j + 1] if j + 1 < len(words) else ""
-            if not (_MODEL_TOKEN.match(nxt) and re.search(r"[A-Za-z]", nxt) and nxt.lower() not in TECH_WORDS):
+            last = j == len(words) - 1
+            # «Office 313», «IdeaCentre 3» — число в конце модели; «Kingston 64 ГБ» — уже характеристика.
+            if not ((last and parts) or (_MODEL_TOKEN.match(nxt) and re.search(r"[A-Za-z]", nxt)
+                                         and nxt.lower() not in TECH_WORDS)):
                 break
         parts.append(w)
     return " ".join(parts) or None
@@ -171,9 +186,12 @@ class RulesExtractor:
 
     def extract_one(self, item: RawItem) -> ExtractedAttributes:
         text = " ".join(item.text.replace(" ", " ").replace("”", '"').replace("“", '"').split())
+        brand, model, brand_conf, model_conf, brand_at = _find_brand_model(text)
         name_src = item.columns.get("name") or text
+        if not item.columns.get("name") and brand_at:
+            # «Бумага для офисной техники Снегурочка …»: наименование кончается там, где начинается марка.
+            name_src = text[:brand_at]
         name = _extract_name(name_src)
-        brand, model, brand_conf, model_conf = _find_brand_model(text)
         name_conf = 0.9 if item.columns.get("name") else (0.8 if len(name) >= 3 else 0.3)
         return ExtractedAttributes(
             name=name,
