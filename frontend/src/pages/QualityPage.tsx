@@ -114,11 +114,13 @@ export function QualityPage() {
                       <Text fz={26} fw={650} className="tabular" c={ok ? undefined : "red"}>
                         {m.lowerIsBetter ? v.toFixed(3) : pct(v)}
                       </Text>
-                      <Text size="sm" c={ok ? "teal" : "red"}>
+                      <Text size="sm" c={ok ? "var(--k-hi)" : "var(--k-lo)"}>
                         {ok ? "✓" : "✗"} цель {m.lowerIsBetter ? `≤ ${m.target}` : `≥ ${pct(m.target)}`}
                       </Text>
                     </Group>
-                    {!m.lowerIsBetter && <Progress value={v * 100} color={ok ? "teal" : "red"} size="sm" />}
+                    {!m.lowerIsBetter && (
+                      <Progress value={v * 100} color={ok ? "var(--k-hi)" : "var(--k-lo)"} size="sm" />
+                    )}
                   </Stack>
                 </Tooltip>
               );
@@ -127,7 +129,7 @@ export function QualityPage() {
           {run.metrics.seconds_per_1000 != null && (
             <Text size="sm" mt="lg">
               Скорость: 1000 позиций за <b>{duration(run.metrics.seconds_per_1000)}</b>{" "}
-              <Text span c={run.metrics.seconds_per_1000 < 300 ? "teal" : "red"}>
+              <Text span c={run.metrics.seconds_per_1000 < 300 ? "var(--k-hi)" : "var(--k-lo)"}>
                 (критерий ТЗ — меньше 5 минут)
               </Text>
             </Text>

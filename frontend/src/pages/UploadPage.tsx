@@ -37,7 +37,7 @@ import { Link, useNavigate } from "react-router";
 import { ApiRequestError } from "../api/client";
 import { useClassify, useConfig, useCreateJob, useUploadFile } from "../api/hooks";
 import type { ClassifyResult, ColumnRole, FileInfo, Sheet } from "../api/types";
-import { ConfidenceBadge } from "../components/badges";
+import { ConfidenceBadge, KtruCode } from "../components/badges";
 import { fileSize, plural, ROLE } from "../lib/format";
 import { SAMPLE_HEADERS, SAMPLE_ROWS } from "../mock/sample";
 
@@ -265,7 +265,7 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
         </Alert>
       )}
       {info.layout_hint && (
-        <Alert color="teal" icon={<IconCheck />}>
+        <Alert color="primary" icon={<IconCheck />}>
           Роли колонок подставлены из прошлой загрузки с такими же заголовками. Проверьте и запускайте.
         </Alert>
       )}
@@ -453,9 +453,7 @@ function QuickResult({ r }: { r: ClassifyResult }) {
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <div>
               <Group gap="xs">
-                <Text className="mono" fw={600}>
-                  {top.ktru_code}
-                </Text>
+                <KtruCode code={top.ktru_code} />
                 <Text fw={500}>{top.name}</Text>
               </Group>
               <Group gap={6} mt={6}>
