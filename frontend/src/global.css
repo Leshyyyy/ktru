@@ -1,0 +1,23 @@
+:root {
+  --app-bg: #f5f6f8;
+}
+[data-mantine-color-scheme="dark"] {
+  --app-bg: var(--mantine-color-dark-8);
+}
+body {
+  background: var(--app-bg);
+}
+.mono {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.85em;
+  letter-spacing: -0.01em;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+.row-clickable {
+  cursor: pointer;
+}
+.row-selected td {
+  background: var(--mantine-primary-color-light);
+}
