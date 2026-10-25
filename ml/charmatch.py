@@ -14,7 +14,7 @@ from typing import Optional
 from contracts.ml_contracts import CharacteristicMatch
 
 from .catalog import Catalog, CatalogChar, CatalogEntry
-from .values import QueryNumber, Range, Text, find_numbers, interval_match, norm_text
+from .values import QueryNumber, Range, Text, find_numbers, interval_match, norm_text, units_compatible
 
 W_REQUIRED = 1.0
 W_OPTIONAL = 0.35
@@ -144,7 +144,7 @@ class CharMatcher:
                 stop = re.search(r"[;,]", q.text[anchor[1]:limit])
                 if stop:
                     limit = anchor[1] + stop.start()
-                nums = [n for n in q.numbers if anchor[1] <= n.start < limit and n.unit in (None, char.unit_key)]
+                nums = [n for n in q.numbers if anchor[1] <= n.start < limit and units_compatible(n.unit, char.unit_key)]
             if not nums and char.unit_key:
                 nums = [n for n in q.numbers if n.unit == char.unit_key]
             if nums:

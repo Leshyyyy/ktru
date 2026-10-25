@@ -46,8 +46,32 @@ TECH_WORDS = {
     "amd", "core", "ryzen", "celeron", "pentium", "athlon", "xeon", "i3", "i5", "i7", "i9",
 }
 TECH_WORDS -= {"intel", "amd"}  # бывают брендами системных блоков, но не моделей ноутбука — решает контекст ниже
+# Слова, которые не могут быть маркой, но бывают частью модели («iRU Office 313», «IdeaPad Pro 5»):
+# аббревиатуры, стандарты, материалы, размеры, цвета, серии. В реальных названиях стоят там же, где марки.
+NOT_BRAND_WORDS = TECH_WORDS | {
+    "spi", "fifa", "pdf", "abs", "pp", "pe", "tft", "ip", "sd", "microsd", "cmos", "ccd", "dc", "ac", "uv", "eva", "pu",
+    "wan", "sas", "pci", "pcie", "api", "eac", "din", "en", "ral", "gsm", "sms", "fm", "am", "tv", "mp3", "usb-c",
+    "xl", "xxl", "xs", "xxs", "s", "m", "l", "rj", "led-", "smd", "ups", "atx", "itx", "rohs", "ul", "ip54", "ip65",
+    "ip67", "ip68", "gost", "red", "black", "white", "silver", "yellow", "blue", "green", "grey", "gray", "gold",
+    "pink", "orange", "brown", "violet", "purple", "beige", "dark", "light", "super", "maxi", "mini", "max",
+    "pro", "plus", "eco", "premium", "classic", "standard", "comfort", "lite", "air", "smart", "home", "office",
+    "sport", "kids", "new", "original", "extra", "ultra", "power", "basic", "set", "kit", "type", "size", "art",
+    "no", "nr", "ref", "model", "series", "edition", "version", "fi", "f", "x2", "x4", "ii", "iii", "iv", "vi",
+    "vii", "viii", "ix", "xi", "xii", "ethernet", "gigabit", "display", "port", "wireless", "hdr", "dlp", "lan",
+}
+# Кириллические аббревиатуры, которые пишут капсом, но это не марки.
+CYR_ABBR = {
+    "гост", "ту", "ивд", "пвх", "мдф", "дсп", "лдсп", "хдф", "рф", "ссср", "окпд", "ктру", "сте", "ип", "ооо",
+    "ао", "пао", "зао", "оао", "нао", "сиз", "мфу", "ибп", "озу", "пзу", "жк", "лед", "вт", "кв", "ква", "ес",
+    "снип", "сп", "сан", "пин", "ст", "мм", "см", "кг", "шт", "уп", "пэт", "пнд", "пвд", "пп", "пэ", "абс", "ппу",
+    "вгс", "нгс", "эпдм", "тпр", "тпэ", "эва", "кгу", "ивл", "экг", "узи", "мрт", "кт", "пцр", "днк", "рнк",
+}
 
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+\-./]*|\d+[A-Za-z][A-Za-z0-9\-]*")
+# Слово-кандидат в марку: только буквы (и дефис/точка/& внутри), без цифр — цифры бывают у моделей.
+_LATIN_WORD = re.compile(r"(?<![\w\-./])[A-Za-z][A-Za-z&]*(?:[\-.][A-Za-z]+)*(?![\w\-/])")
+# Кириллица капсом: одно-три слова подряд, от трёх букв.
+_CYR_CAPS = re.compile(r"(?<![\wА-ЯЁа-яё])[А-ЯЁ]{3,}(?:[\s\-][А-ЯЁ]{2,}){0,2}(?![А-ЯЁа-яё])")
 _COMPAT = re.compile(r"(совместим\w*\s+с|для\s+(?:принтер\w*|мфу|ноутбук\w*|аппарат\w*|картридж\w*|техники\s+[A-Z]))\s*", re.I)
 _NAME_STOP = re.compile(r"[,;:]|\.\s|\s[-–—]\s")
 
@@ -100,25 +124,31 @@ def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, f
         model = _model_after(text[m.end():])
         conf_model = 0.85 if model and _looks_like_model(model) else 0.5
         return BRANDS[m.group(1).lower()], model, 0.95, conf_model, m.start()
-    tokens = [(m.group(0), m.start(), m.end()) for m in _LATIN_TOKEN.finditer(text)]
-    for i, (tok, start, end) in enumerate(tokens):
-        if _in_spans(start, spans):
+    # Марки нет в словаре — ищем самое раннее «марочное» слово: латиница с заглавной или капсом
+    # (Rommelsbacher, REXANT, AvtoPoryadok), либо кириллица капсом (ПРАКТИК, МОНЕТНЫЙ ДВОР).
+    candidates = []
+    for m in _LATIN_WORD.finditer(text):
+        tok = m.group(0)
+        if (_in_spans(m.start(), spans) or tok.lower().strip(".") in NOT_BRAND_WORDS or len(tok) < 2
+                or not (tok[:1].isupper() or tok.isupper())):
             continue
-        key = tok.lower().strip(".")
-        # Неизвестный бренд: слово с заглавной буквы (не аббревиатура вроде SPI), за ним модель с цифрами.
-        guessed = (
-            key not in TECH_WORDS
-            and tok[:1].isupper()
-            and tok.isalpha()
-            and len(tok) >= 3
-            and not (tok.isupper() and len(tok) <= 4)
-            and i + 1 < len(tokens)
-            and re.search(r"\d", tokens[i + 1][0]) is not None
-            and _adjacent(text, end, tokens[i + 1][1])
-        )
-        if guessed:
-            model = _model_after(text[end:])
-            return tok, model, 0.6, (0.85 if model and _looks_like_model(model) else 0.5), start
+        candidates.append((m.start(), m.end(), tok, 0.6))
+        break
+    letters = [c for c in text if c.isalpha()]
+    shouting = letters and sum(c.isupper() for c in letters) / len(letters) > 0.6  # весь текст капсом
+    for m in ([] if shouting else _CYR_CAPS.finditer(text)):
+        found = m.group(0).strip()
+        first = found.split()[0]
+        # Одно короткое слово капсом (СМЛ, АСФ, ИОЛ) — почти всегда аббревиатура, а не марка.
+        if (_in_spans(m.start(), spans) or first.lower() in CYR_ABBR or (" " not in found and len(found) <= 4)
+                or text[max(0, m.start() - 1):m.start()] == "("):
+            continue
+        candidates.append((m.start(), m.end(), found, 0.5))
+        break
+    if candidates:
+        start, end, tok, conf = min(candidates)
+        model = _model_after(text[end:])
+        return tok, model, conf, (0.85 if model and _looks_like_model(model) else 0.5), start
     return None, None, 0.0, 0.0, None
 
 

@@ -99,10 +99,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Метрики ML на размеченном наборе")
     ap.add_argument("--data", required=True)
     ap.add_argument("--split", default="dev", choices=["dev", "test"])
+    ap.add_argument("--tier", default=None, help="core / extra — только позиции этого tier (разметка v3)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     samples = [json.loads(line) for line in open(args.data, encoding="utf-8") if line.strip()]
-    samples = [s for s in samples if s.get("split") == args.split]
+    samples = [s for s in samples if s.get("split") == args.split and (not args.tier or s.get("tier") == args.tier)]
     if not samples:
         raise SystemExit(f"В {args.data} нет позиций split={args.split}")
     pipe = KtruPipeline(Settings())
@@ -111,7 +112,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
     cal = "обученный" if getattr(pipe.calibrator, "fitted", False) else "эвристика"
-    print(f"split={args.split}  позиций={m['samples']}  реранкер={pipe.reranker.name}  калибратор={cal}")
+    print(f"split={args.split}  tier={args.tier or 'все'}  позиций={m['samples']}  реранкер={pipe.reranker.name}  калибратор={cal}")
     for k in ("top1_full_code", "top1_any_valid", "top1_okpd2", "top3", "top1_macro_by_okpd2", "attributes_accuracy", "ece",
               "fast_path_share", "seconds_per_1000"):
         print(f"  {k:22} {m[k]}")

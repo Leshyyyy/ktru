@@ -112,10 +112,16 @@ class JevReranker:
     def _remember(self, key: str, probs: dict) -> None:
         with self._lock:
             self._cache[key] = probs
-            if self.cache_path:
+            if not self.cache_path:
+                return
+            try:
                 self.cache_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.cache_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps({"key": key, "probs": probs}, ensure_ascii=False) + "\n")
+            except OSError as e:
+                # В контейнере файловая система только для чтения: кэш остаётся в памяти, ответ Jev не теряем.
+                log.warning("Кэш Jev не записан на диск (%s), дальше только в памяти", e)
+                self.cache_path = None
 
     def rerank_batch(self, pairs, texts: list[str] | None = None) -> list[RerankResult]:
         texts = texts or [a.name for a, _ in pairs]

@@ -9,7 +9,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CATALOG = REPO_ROOT / "data" / "ktru" / "ktru_data" / "catalog.jsonl"
 FIXTURE_CATALOG = REPO_ROOT / "contracts" / "fixtures" / "fake_catalog.jsonl"
-ARTIFACTS = REPO_ROOT / "ml" / "artifacts"
+ARTIFACTS = REPO_ROOT / "ml" / "artifacts"  # отчёты и кэш, не в git
+MODELS = REPO_ROOT / "ml" / "models"  # обученные артефакты (калибратор) — в git и в Docker-образе
 
 
 def load_dotenv(*paths: Path) -> None:
@@ -35,8 +36,10 @@ def _env(name: str, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    extractor: str = field(default_factory=lambda: _env("EXTRACTOR", "hybrid"))
-    reranker: str = field(default_factory=lambda: _env("RERANKER", "cross_encoder"))
+    # По умолчанию то, что реально работает без ключей и без torch: правила и сверка характеристик.
+    # hybrid/llm-извлечение пока не реализовано, cross_encoder требует sentence-transformers.
+    extractor: str = field(default_factory=lambda: _env("EXTRACTOR", "rules"))
+    reranker: str = field(default_factory=lambda: _env("RERANKER", "none"))
     device: str = field(default_factory=lambda: _env("DEVICE", "cpu"))
     llm_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL"))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL"))
@@ -48,7 +51,7 @@ class Settings:
     cross_encoder_model: str = field(default_factory=lambda: _env("CROSS_ENCODER_MODEL", "BAAI/bge-reranker-v2-m3"))
     catalog_path: str = field(default_factory=lambda: _env("KTRU_CATALOG_PATH"))
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
-    calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(ARTIFACTS / "calibrator.joblib")))
+    calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(MODELS / "calibrator.joblib")))
     llm_cache_path: str = field(default_factory=lambda: _env("LLM_CACHE_PATH", str(ARTIFACTS / "llm_cache.jsonl")))
     # Доля оценки реранкера в итоговом балле на пути rerank. Малая: Jev разрешает ничьи, а не перекрывает сверку
     # характеристик (на dev вес 0.25–0.75 исправлял и портил поровну, см. ml/CLAUDE.md).

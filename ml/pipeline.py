@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -242,7 +243,8 @@ class KtruPipeline:
                 ktru_code=s.ktru_code,
                 name=s.candidate.name,
                 okpd2_code=s.candidate.okpd2_code,
-                confidence=round(min(max(c, 0.0), 1.0), 4),
+                # Вниз, а не к ближайшему: после округления сумма по позиции должна остаться ≤ 1.
+                confidence=math.floor(min(max(c, 0.0), 1.0) * 10_000) / 10_000,
                 features={k: round(v, 4) for k, v in s.features.items()},
                 explanation=explanation(s.match) if rank == 1 else None,
                 why_not_chosen=None if rank == 1 else why_not_chosen(

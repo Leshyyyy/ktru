@@ -42,3 +42,16 @@ def test_query_intervals():
     assert interval_match(q, Range(14, False, 15, True)) > interval_match(q, Range(13, False, 14, True))
     assert interval_match(Range(lo=18, lo_inc=False), Range(18, True, 18, True)) is None  # «более 18» ≠ «18»
     assert interval_match(Range(hi=4, hi_inc=False), Range(4, True, 6, False)) is None  # «менее 4» ≠ «≥ 4 и < 6»
+
+
+def test_ktru_full_unit_names():
+    from ml.values import unit_key_from_ktru
+
+    assert unit_key_from_ktru("Кубический сантиметр") == "ml"
+    assert unit_key_from_ktru("Сантиметр") == "cm"
+    assert unit_key_from_ktru("Квадратный метр") is None
+    assert unit_key_from_ktru("Градус Цельсия") == "c"
+    assert unit_key_from_ktru("Килограмм") == "kg"
+    assert unit_key_from_ktru("Месяц") == "month"
+    nums = find_numbers(norm_text("объем 5 кубический сантиметр, вес 2 килограмма, температура 40 градусов цельсия"))
+    assert {(n.value, n.unit) for n in nums} >= {(5.0, "ml"), (2.0, "kg"), (40.0, "c")}

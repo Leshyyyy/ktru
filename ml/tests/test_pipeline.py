@@ -93,3 +93,14 @@ def test_missing_required_does_not_push_to_other_group(synth_pipeline):
     # У «Иглы спинальной» обязательная характеристика не указана — это не повод уходить в другую группу.
     (r,) = _run(synth_pipeline, "Игла спинальная")
     assert r.predictions[0].okpd2_code == "77.77.04.000"
+
+
+def test_rounded_confidences_sum_at_most_one(fixture_pipeline):
+    for text in ("Бумага офисная А4 80 г/м2", "Принтер", "Ноутбук", "Шприц одноразовый 5 мл трёхкомпонентный"):
+        (r,) = _run(fixture_pipeline, text)
+        assert sum(p.confidence for p in r.predictions) <= 1.0
+
+
+def test_no_key_default_mode_is_normal(fixture_pipeline):
+    (r,) = _run(fixture_pipeline, "Принтер лазерный")
+    assert r.mode == "normal"
