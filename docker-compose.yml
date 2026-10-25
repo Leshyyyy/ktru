@@ -1,0 +1,291 @@
+# AI-классификатор КТРУ. Запуск: docker compose up --build (CPU, без ключей LLM).
+#
+# Все переменные и значения по умолчанию — в .env.example; свои значения кладите в .env.
+# Пароли по умолчанию — только для локального запуска: PostgreSQL и Redis сидят во внутренней сети
+# без выхода наружу, а API по умолчанию слушает только 127.0.0.1.
+
+name: ktru
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Общее для сервисов из образа бэкенда: пользователь без прав (задан в образе), файловая система только
+# для чтения, без Linux capabilities и без повышения привилегий.
+x-backend: &backend
+  image: ktru-backend:local
+  # Образ собирает сервис migrate (от него зависят остальные), здесь его только используют.
+  pull_policy: never
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  networks: [internal]
+  logging: *logging
+
+x-db-app-env: &db-app-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-ktru}
+  APP_DB_USER: ${APP_DB_USER:-ktru_app}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:-ktru_app_local_only}
+
+x-redis-env: &redis-env
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-ktru_redis_local_only}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg16-trixie@sha256:fce8fb583b92ef8af5150b373a96415d46a8cd38ba09b38efeea17c8b4c7d782
+    user: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ktru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ktru_owner_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-ktru}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    shm_size: 128mb
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      # По TCP, а не через сокет: во время initdb временный сервер слушает только сокет, и проверка
+      # через него прошла бы раньше, чем база готова к подключениям migrate.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks: [internal]
+    logging: *logging
+
+  redis:
+    image: redis:7.4.11-alpine@sha256:57e4255cc971b1c8d6f8a6ca283ac01bc3ecdd914273ef6bfaede87aaecd6541
+    user: redis
+    # Пароль через файл настроек, а не аргументом: так его не видно в списке процессов хоста.
+    command:
+      - sh
+      - -c
+      - printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf --appendonly yes
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ktru_redis_local_only}
+    volumes:
+      - redisdata:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+    logging: *logging
+
+  # Разовый: миграции, роль приложения в БД, стартовый каталог. Остальные ждут его успешного завершения.
+  migrate:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "backend.migrate"]
+    restart: "no"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-ktru}
+      POSTGRES_USER: ${POSTGRES_USER:-ktru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ktru_owner_local_only}
+      APP_DB_USER: ${APP_DB_USER:-ktru_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-ktru_app_local_only}
+      PIPELINE: ${PIPELINE:-stub}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command:
+      - uvicorn
+      - --factory
+      - backend.app.main:create_app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-server-header
+      - --no-access-log
+    environment:
+      <<: [*db-app-env, *redis-env]
+      PIPELINE: ${PIPELINE:-stub}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Без значения: берутся из .env или окружения, если заданы, иначе действуют умолчания из .env.example.
+      API_DOCS:
+      API_STATEMENT_TIMEOUT_MS:
+      CORS_ORIGINS:
+      MAX_FILE_MB:
+      MAX_ROWS:
+      MAX_ITEMS_PER_JOB:
+      CLASSIFY_MAX_ITEMS:
+      GREEN_THRESHOLD:
+      YELLOW_THRESHOLD:
+      EXTRACTOR:
+      RERANKER:
+      DEVICE:
+    ports:
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    volumes:
+      - uploads:/data/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/config', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+      start_interval: 2s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # public — чтобы опубликовать порт; база и Redis остаются только во внутренней сети.
+    networks: [internal, public]
+
+  worker-io:
+    <<: *backend
+    command:
+      - celery
+      - -A
+      - backend.tasks.celery_app
+      - worker
+      - -Q
+      - io
+      - -n
+      - io@%h
+      - --concurrency
+      - "2"
+      - --without-gossip
+      - --without-mingle
+    environment:
+      <<: [*db-app-env, *redis-env]
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_ROWS:
+      MAX_ITEMS_PER_JOB:
+    volumes:
+      - uploads:/data/uploads:ro
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"io@$${HOSTNAME}\" --timeout 10"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker-ml:
+    <<: *backend
+    command:
+      - celery
+      - -A
+      - backend.tasks.ml_worker
+      - worker
+      - -Q
+      - ml
+      - -n
+      - ml@%h
+      - --concurrency
+      - "${ML_WORKER_CONCURRENCY:-1}"
+      - --without-gossip
+      - --without-mingle
+    environment:
+      <<: [*db-app-env, *redis-env]
+      PIPELINE: ${PIPELINE:-stub}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      HF_HOME: /data/models
+      ML_HEARTBEAT_INTERVAL_S:
+      ML_READY_TTL_S:
+      ML_WORKER_INIT_TIMEOUT_S:
+      STUB_DELAY_MS:
+      STUB_DEGRADED:
+      # Переменные ML (docs/analytics/07-ml.md). Ключ LLM получает только этот сервис.
+      EXTRACTOR:
+      RERANKER:
+      DEVICE:
+      LLM_BASE_URL:
+      LLM_MODEL:
+      LLM_API_KEY:
+      JEV_MODEL:
+      EMBEDDER_MODEL:
+      EMBEDDING_DIM:
+      CROSS_ENCODER_MODEL:
+      CALIBRATOR_PATH:
+    volumes:
+      - models:/data/models
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"ml@$${HOSTNAME}\" --timeout 10"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 600s
+      start_interval: 5s
+    stop_grace_period: 60s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # public — выход в интернет для облачного LLM и скачивания моделей; входящих портов нет.
+    networks: [internal, public]
+
+  beat:
+    <<: *backend
+    command:
+      - celery
+      - -A
+      - backend.tasks.celery_app
+      - beat
+      - --schedule
+      - /tmp/celerybeat-schedule
+      - --pidfile
+      - /tmp/celerybeat.pid
+    environment:
+      <<: *redis-env
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
+  models:
+
+networks:
+  # Без выхода наружу: сюда подключены база и Redis.
+  internal:
+    internal: true
+  public: {}

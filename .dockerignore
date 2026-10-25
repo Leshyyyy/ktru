@@ -1,0 +1,16 @@
+# Контекст сборки — корень репозитория (образ бэкенда, backend/Dockerfile). Белый список: в контекст
+# попадает только то, что нужно образу. data/ и context/ (каталог КТРУ, документы команды), .env и .git
+# не уходят в сборку вообще. У фронтенда свой контекст и свой frontend/.dockerignore.
+*
+!backend/
+!contracts/
+!ml/
+
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+backend/tests
+backend/requirements*.in
+backend/requirements-dev.txt
+ml/tests

@@ -13,3 +13,7 @@ data/
 .pytest_cache/
 ml/artifacts/
 .env
+
+# Локальные переопределения compose (монтирование каталога и т. п.)
+docker-compose.override.yml
+.ruff_cache/
