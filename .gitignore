@@ -1,3 +1,15 @@
 docs/_build/
 __pycache__/
 .DS_Store
+
+# Данные КТРУ (moy-zakupki.ru): не публиковать, см. KTRU_DATA.md
+data/
+*.jsonl
+!contracts/fixtures/*.jsonl
+
+# Python
+.venv/
+*.egg-info/
+.pytest_cache/
+ml/artifacts/
+.env
