@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:prism": "VITE_API_MODE=http concurrently -k -n mock,web \"prism mock ../contracts/openapi.yaml -p 4010\" \"vite\"",
-    "build": "tsc -b && VITE_API_MODE=http vite build",
-    "build:demo": "tsc -b && VITE_API_MODE=memory VITE_ROUTER=hash vite build --base ./ --outDir dist-demo",
+    "dev:prism": "concurrently -k -n mock,web \"prism mock ../contracts/openapi.yaml -p 4010\" \"vite --mode prism\"",
+    "build": "tsc -b && vite build",
+    "build:demo": "tsc -b && vite build --mode demo --base ./ --outDir dist-demo",
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "dev:backend": "vite --mode backend"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.2.8",
@@ -39,5 +40,8 @@
     "postcss-simple-vars": "7.0.1",
     "typescript": "5.9.3",
     "vite": "7.3.7"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }
