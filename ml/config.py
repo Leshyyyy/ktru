@@ -50,6 +50,8 @@ class Settings:
     embedding_dim: int = field(default_factory=lambda: int(_env("EMBEDDING_DIM", "1024")))
     cross_encoder_model: str = field(default_factory=lambda: _env("CROSS_ENCODER_MODEL", "BAAI/bge-reranker-v2-m3"))
     catalog_path: str = field(default_factory=lambda: _env("KTRU_CATALOG_PATH"))
+    # Под каким catalog_version_id загрузить файл KTRU_CATALOG_PATH в get_pipeline(); «» — задачи без версии.
+    catalog_version_id: str = field(default_factory=lambda: _env("KTRU_CATALOG_VERSION_ID"))
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(MODELS / "calibrator.joblib")))
     # Кэш эмбеддингов каталога; в docker-compose — том /data/models (переживает перезапуск воркера).

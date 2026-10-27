@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
+from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -27,7 +30,7 @@ from contracts.ml_contracts import (
 )
 
 from . import calibrate as calibration
-from .catalog import Catalog, load_jsonl
+from .catalog import Catalog, entry_from_row, load_jsonl
 from .charmatch import CharMatcher, EntryMatch, build_query_context
 from .config import Settings
 from .explain import explanation, why_not_chosen
@@ -96,9 +99,15 @@ class KtruPipeline:
     def is_ready(self) -> dict[str, bool]:
         return {"models": True, "catalog": len(self.retriever.items) > 0}
 
+    def add_examples(self, pairs: Iterable[tuple[str, str]] | dict[str, str]) -> int:
+        """Подтверждённые пользователями пары «текст → код» (FR-4.7). Повтор текста заменяет код. → число пар."""
+        pairs = dict(pairs.items() if isinstance(pairs, dict) else pairs)
+        self.retriever.add_examples(pairs)
+        return len(pairs)
+
     def classify_batch(self, items: list[RawItem], catalog_version_id: str = "",
                        options: Optional[PipelineOptions] = None) -> list[ClassificationResult]:
-        """catalog_version_id пока не используется: в памяти одна версия каталога. Появится вместе с pgvector."""
+        """Классификация по каталогу этого экземпляра. Версии каталога различает CatalogVersions ниже."""
         opts = options or PipelineOptions()
         ranked = self.rank(items, use_feedback=opts.use_feedback, options=opts)
         mode = "degraded" if (opts.use_llm and self.llm_wanted_but_missing) else "normal"
@@ -266,12 +275,92 @@ class KtruPipeline:
         )
 
 
-_PIPELINE: Optional[KtruPipeline] = None
+class CatalogVersions:
+    """Pipeline поверх нескольких версий каталога (FR-8.1: новая версия без перезапуска воркера).
+
+    Каждая задача обрабатывается той версией каталога, которая в ней закреплена (catalog_version_id),
+    поэтому коды ML всегда проходят проверку бэкенда по каталогу задачи. Новую версию бэкенд передаёт строками
+    из catalog_items: load_version(version_id, rows). Индекс строится, пока задачи обслуживает старая версия,
+    затем подменяется. В памяти держится не больше KEEP версий: текущая и предыдущая — для задач, которые
+    стартовали до импорта. Модели, калибратор и реранкер общие для всех версий.
+    """
+
+    KEEP = 2
+
+    def __init__(self, settings: Optional[Settings] = None, calibrator=None, reranker=None, extractor=None):
+        self.settings = settings or Settings()
+        self._calibrator = calibrator or calibration.load(self.settings.calibrator_path)
+        self._reranker = reranker
+        self._extractor = extractor or RulesExtractor()
+        self._versions: OrderedDict[str, KtruPipeline] = OrderedDict()
+        self._examples: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def load_version(self, version_id: str, rows: Iterable[dict]) -> int:
+        """Строит индекс версии каталога из строк CatalogRow (dict). Долго (~50 с на полном КТРУ) — вызывать
+        из отдельного потока; классификация других версий в это время продолжается. → число позиций."""
+        return self._add(version_id, Catalog(entry_from_row(r) for r in rows))
+
+    def load_file(self, version_id: str, path: str) -> int:
+        return self._add(version_id, Catalog(load_jsonl(path)))
+
+    def _add(self, version_id: str, catalog: Catalog) -> int:
+        engine = KtruPipeline(self.settings, catalog=catalog, calibrator=self._calibrator,
+                              reranker=self._reranker, extractor=self._extractor)
+        self._reranker = self._reranker or engine.reranker
+        with self._lock:
+            engine.add_examples(self._examples)
+            self._versions[version_id] = engine
+            self._versions.move_to_end(version_id)
+            while len(self._versions) > self.KEEP:
+                old, _ = self._versions.popitem(last=False)
+                log.info("Версия каталога %s выгружена из памяти", old)
+        return len(catalog)
+
+    def loaded_versions(self) -> list[str]:
+        """Загруженные версии, последняя — текущая. Бэкенд закрепляет за новой задачей последнюю."""
+        with self._lock:
+            return list(self._versions)
+
+    def add_examples(self, pairs: Iterable[tuple[str, str]] | dict[str, str]) -> int:
+        pairs = dict(pairs.items() if isinstance(pairs, dict) else pairs)
+        with self._lock:
+            self._examples.update(pairs)
+            engines = list(self._versions.values())
+        for engine in engines:
+            engine.add_examples(pairs)
+        return len(pairs)
+
+    def is_ready(self) -> dict[str, bool]:
+        with self._lock:
+            return {"models": True, "catalog": any(e.is_ready()["catalog"] for e in self._versions.values())}
+
+    def classify_batch(self, items: list[RawItem], catalog_version_id: str = "",
+                       options: Optional[PipelineOptions] = None) -> list[ClassificationResult]:
+        with self._lock:
+            engine = self._versions.get(catalog_version_id)
+            if engine is None and not catalog_version_id and self._versions:
+                engine = next(reversed(self._versions.values()))  # без версии — текущая (оценка, отладка)
+        if engine is None:
+            error = f"Версия каталога {catalog_version_id or '(не указана)'} не загружена в ML-воркер."
+            return [ClassificationResult(item_id=it.item_id, error=error) for it in items]
+        return engine.classify_batch(items, catalog_version_id, options)
 
 
-def get_pipeline() -> KtruPipeline:
-    """Один экземпляр на процесс воркера: каталог и модели грузятся один раз."""
+_PIPELINE: Optional[CatalogVersions] = None
+
+
+def get_pipeline(load_file: bool = True) -> CatalogVersions:
+    """Один экземпляр на процесс воркера.
+
+    load_file=True — сразу загрузить каталог из KTRU_CATALOG_PATH под версией KTRU_CATALOG_VERSION_ID
+    (или «» — тогда он обслуживает задачи без версии). Бэкенд, который берёт каталог из базы, вызывает
+    get_pipeline(load_file=False), затем load_version(version_id, rows) для версии из catalog_versions.
+    """
     global _PIPELINE
     if _PIPELINE is None:
-        _PIPELINE = KtruPipeline()
+        _PIPELINE = CatalogVersions()
+        if load_file:
+            settings = _PIPELINE.settings
+            _PIPELINE.load_file(settings.catalog_version_id, str(settings.resolved_catalog_path()))
     return _PIPELINE
