@@ -11,6 +11,12 @@ alembic>=1.14,<2
 pgvector>=0.3,<1
 celery[redis]>=5.4,<6
 
+# Разбор файлов и экспорт (backend/files, Донир) — те же пакеты, что в backend/files/requirements.txt (без pytest).
+python-calamine>=0.9,<1
+openpyxl>=3.1,<4
+pdfplumber>=0.11,<1
+charset-normalizer>=3,<4
+
 # Рантайм ML для PIPELINE=real — те же пакеты, что в ml/requirements.txt (без pytest).
 # Добавили пакет в ml/requirements.txt — добавьте и сюда.
 numpy

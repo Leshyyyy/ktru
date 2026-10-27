@@ -3,6 +3,8 @@
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+# backend/files ведёт Донир со своими правилами оформления; его тесты CI запускает отдельным шагом.
+extend-exclude = ["files"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "C4", "PT", "RUF"]

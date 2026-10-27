@@ -65,6 +65,8 @@ jobs:
           ruff format --check backend
       - name: Тесты
         run: pytest backend/tests
+      - name: Тесты разбора файлов и экспорта (backend/files)
+        run: pytest backend/files/tests
       - name: Известные уязвимости в зависимостях
         run: pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r backend/requirements-dev.txt
 
