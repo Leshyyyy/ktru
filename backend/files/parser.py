@@ -206,7 +206,7 @@ def parse_rows(
 
         parsed_rows.append(
             ParsedRow(
-                row_index=len(parsed_rows),
+                row_index=current_row_idx,
                 raw_text=raw_text,
                 raw_row=cleaned_cells,
             )

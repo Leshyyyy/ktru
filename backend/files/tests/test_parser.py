@@ -118,3 +118,37 @@ def test_parse_rows_limit_exceeded(tmp_path: Path):
 
     with pytest.raises(LimitExceededError):
         parse_rows(csv_file, header_row=0, column_mapping=mapping)
+
+
+def test_parse_rows_row_index_with_skipped_rows_and_header_offset(tmp_path: Path):
+    """
+    Проверяет, что row_index соответствует исходному положению строки относительно заголовка,
+    а пропущенные пустые строки и строки «Итого» не сбивают нумерацию последующих позиций.
+    """
+    csv_file = tmp_path / "spec_with_gaps.csv"
+    with open(csv_file, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Спецификация №1", ""])  # строка 0: шапка над таблицей
+        writer.writerow(["Наименование", "Кол-во"])  # строка 1: заголовок таблицы (header_row = 1)
+        writer.writerow(["Перчатки", "10"])  # строка 2 (индекс 0 после заголовка)
+        writer.writerow(["", ""])  # строка 3 (индекс 1 после заголовка, пустая -> пропуск)
+        writer.writerow(["Бумага А4", "5"])  # строка 4 (индекс 2 после заголовка)
+        writer.writerow(["Итого", "15"])  # строка 5 (индекс 3 после заголовка, итого -> пропуск)
+        writer.writerow(["Скрепки", "100"])  # строка 6 (индекс 4 после заголовка)
+
+    mapping = [
+        ColumnMappingItem(index=0, role=ColumnRole.NAME),
+        ColumnMappingItem(index=1, role=ColumnRole.QUANTITY),
+    ]
+
+    items = parse_rows(csv_file, header_row=1, column_mapping=mapping)
+    assert len(items) == 3
+
+    assert items[0].row_index == 0
+    assert items[0].raw_text == "Перчатки"
+
+    assert items[1].row_index == 2
+    assert items[1].raw_text == "Бумага А4"
+
+    assert items[2].row_index == 4
+    assert items[2].raw_text == "Скрепки"
