@@ -1,6 +1,7 @@
-"""Импорт каталога КТРУ из JSONL (одна строка — CatalogRow) в catalog_versions и catalog_items.
+"""Каталог КТРУ в базе: импорт из JSONL (одна строка — CatalogRow) в catalog_versions и catalog_items,
+выбор версии для новых задач.
 
-Этим же кодом будет работать POST /catalog/import (FR-8.1); сейчас его вызывает migrate для стартового каталога.
+Импортом будет работать POST /catalog/import (FR-8.1); сейчас его вызывает migrate для стартового каталога.
 """
 
 from __future__ import annotations
@@ -64,6 +65,16 @@ def read_rows(path: Path) -> Iterator[CatalogRow]:
                 fields = ", ".join(".".join(str(p) for p in err["loc"]) or "строка" for err in e.errors())
                 message = f"Строка {number}: не соответствует формату CatalogRow (поля: {fields})."
                 raise CatalogImportError(message) from e
+
+
+def latest_ready_version(session: Session) -> uuid.UUID | None:
+    """Версия, с которой работают новые задачи и поиск по умолчанию: последняя загруженная в статусе ready."""
+    return session.scalar(
+        select(CatalogVersion.id)
+        .where(CatalogVersion.status == "ready")
+        .order_by(CatalogVersion.loaded_at.desc())
+        .limit(1)
+    )
 
 
 def file_sha256(path: Path) -> str:

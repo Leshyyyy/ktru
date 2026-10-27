@@ -25,9 +25,9 @@ from . import schemas
 _EMPTY_SUMMARY = schemas.JobSummary(green=0, yellow=0, red=0, confirmed=0, corrected=0)
 
 
-def _real(threshold: float) -> Any:
+def real_literal(value: float) -> Any:
     # Порог сравнивается с колонкой real как real: иначе 0.7 из базы (0.69999999) оказался бы ниже порога 0.7.
-    return cast(literal(threshold), REAL)
+    return cast(literal(value), REAL)
 
 
 def _utc(value: datetime | None) -> datetime | None:
@@ -63,7 +63,7 @@ def _summaries(
     if not job_ids:
         return {}
     top = aliased(models.Prediction)
-    green, yellow = _real(settings.green_threshold), _real(settings.yellow_threshold)
+    green, yellow = real_literal(settings.green_threshold), real_literal(settings.yellow_threshold)
     rows = session.execute(
         select(
             models.Item.job_id,
@@ -156,7 +156,7 @@ def _conditions(filters: ItemFilters, top: Any, settings: Settings) -> list[Any]
     if filters.status:
         conditions.append(models.Item.status == filters.status)
     if filters.band:
-        green, yellow = _real(settings.green_threshold), _real(settings.yellow_threshold)
+        green, yellow = real_literal(settings.green_threshold), real_literal(settings.yellow_threshold)
         conditions.append(
             {
                 "green": top.confidence >= green,
@@ -165,7 +165,7 @@ def _conditions(filters: ItemFilters, top: Any, settings: Settings) -> list[Any]
             }[filters.band]
         )
     if filters.q and (q := filters.q.strip()):
-        conditions.append(models.Item.raw_text.ilike(f"%{_escape_like(q)}%", escape="\\"))
+        conditions.append(models.Item.raw_text.ilike(f"%{escape_like(q)}%", escape="\\"))
     if filters.flag:
         conditions.append(models.Item.flags.contains([filters.flag]))
     if filters.group_id:
@@ -173,7 +173,7 @@ def _conditions(filters: ItemFilters, top: Any, settings: Settings) -> list[Any]
     return conditions
 
 
-def _escape_like(text: str) -> str:
+def escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 

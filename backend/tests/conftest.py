@@ -199,6 +199,23 @@ class Stack:
     def drain(self, pipeline: Pipeline | None = None, settings: Settings | None = None) -> None:
         drain(self.queue, self.engine, settings or self.settings, pipeline)
 
+    def parse_only(self, job_id: str) -> list[tuple[str, list[str]]]:
+        """Только разбор файла задачи: поставленные пачки возвращаются, а не выполняются."""
+        self.queue.parse.remove(job_id)
+        processing.parse_job(self.engine, self.settings, self.queue, uuid.UUID(job_id))
+        chunks, self.queue.chunks = self.queue.chunks, []
+        return chunks
+
+    def run_chunk(self, chunk: tuple[str, list[str]], pipeline: Pipeline | None = None) -> None:
+        job_id, item_ids = chunk
+        processing.process_chunk(
+            self.engine,
+            self.settings,
+            pipeline or StubPipeline(),
+            uuid.UUID(job_id),
+            [uuid.UUID(i) for i in item_ids],
+        )
+
     def upload(self, content: bytes, filename: str = "spec.xlsx") -> dict[str, Any]:
         response = self.client.post("/api/v1/files", files={"file": (filename, content)})
         assert response.status_code == 201, response.text

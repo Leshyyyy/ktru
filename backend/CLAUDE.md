@@ -9,7 +9,7 @@
 | `app/main.py` | `create_app()`: роутеры под `/api/v1`, обработчики ошибок, middleware, lifespan (движок БД, Redis, очередь Celery) |
 | `app/errors.py` | `ApiError` и единый формат `{"error": {"code", "message", "details"}}`; валидация → 400 `invalid_request` с текстом по-русски |
 | `app/middleware.py` | request_id и строка лога на запрос, заголовки безопасности, лимит тела (413 `file_too_large`) |
-| `app/routes/` | маршруты по тегам `openapi.yaml`: `files.py` (`POST /files`), `jobs.py` (`/jobs`, отмена, удаление), `items.py` (чтение позиций), `system.py` (`/health`, `/config`) |
+| `app/routes/` | маршруты по тегам `openapi.yaml`: `files.py` (`POST /files`), `jobs.py` (`/jobs`, отмена, удаление), `items.py` (позиции и решения: confirm, decision, confirm-bulk), `catalog.py` (поиск, позиция КТРУ, версии), `system.py` (`/health`, `/config`) |
 | `app/views.py` | сборка ответов `Job` и `Item` из таблиц: summary, ETA, цвет, предсказания с наименованиями из каталога задачи, `final` из `v_item_final` |
 | `app/health.py` | проверки для `/health`: база, Redis, готовность worker-ml, каталог |
 | `core/settings.py` | все переменные окружения (`Settings`); список с пояснениями — `.env.example` |
@@ -66,6 +66,7 @@ services:
 - Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каждый ответ ML проходит `check_results()`.
 - Аргументы задач Celery — только JSON-типы (id, строки); воркер меняет позиции только `WHERE status = 'pending'`.
 - Переход статуса задачи — один `UPDATE ... WHERE status IN (...)`: повторная доставка, гонка двух воркеров, отмена и удаление посреди работы не должны ломать состояние (тесты — `tests/test_processing.py`).
+- Решения только добавляются в `decisions`; итоговый код — `v_item_final`. Ручное решение (`via = manual`) пишет пример в `confirmed_examples` (upsert по `source_item_id`, `norm_text` — только `normalize_text`), массовое (`via = bulk`) — нет. Повтор того же ручного решения не создаёт новой строки.
 - Порог green сравнивается со значением колонки `real` как `real` (`processing.as_real`, в SQL — `CAST(... AS real)`): иначе статус от воркера и цвет в API разойдутся ровно на пороге.
 - Секреты — только из переменных окружения; каждому сервису compose передаются только нужные ему (ключ LLM — только worker-ml, пароль владельца БД — только migrate). В логах не бывает паролей и текстов исключений для пользователя.
 - Данные КТРУ (`data/`, `context/`) не коммитим и не кладём в тесты: в тестах — `contracts/fixtures/` и искусственные строки.

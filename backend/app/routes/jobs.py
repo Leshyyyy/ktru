@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from backend.core import models, uploads
+from backend.core.catalog import latest_ready_version
 from backend.core.processing import ACTIVE_STATUSES
 from backend.core.queue import TaskQueue
 from backend.core.settings import Settings
@@ -53,12 +54,7 @@ def create_job(
     sheet = _sheet(source, body.sheet)
     columns = [entry.model_dump() for entry in body.column_mapping]
     _check_mapping(sheet, columns)
-    version_id = session.scalar(
-        select(models.CatalogVersion.id)
-        .where(models.CatalogVersion.status == "ready")
-        .order_by(models.CatalogVersion.loaded_at.desc())
-        .limit(1)
-    )
+    version_id = latest_ready_version(session)
     if version_id is None:
         raise not_ready()
 
