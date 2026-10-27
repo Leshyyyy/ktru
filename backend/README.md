@@ -53,7 +53,9 @@ curl -s $API/items/$ITEM | jq '{raw_text, extracted, predictions: [.predictions[
 ```bash
 curl -s -X POST $API/items/$ITEM/confirm | jq '{status, final}'
 VERSION=$(jq -r .catalog_version_id job.json)
-curl -s "$API/catalog/search?q=бумага&version_id=$VERSION" | jq '.items[] | {ktru_code, name}'
+# Кириллицу в адресе curl сам не кодирует, а uvicorn такой запрос отвергает — отсюда --data-urlencode.
+curl -s --get --data-urlencode "q=бумага" --data-urlencode "version_id=$VERSION" $API/catalog/search \
+  | jq '.items[] | {ktru_code, name}'
 curl -s -X PUT $API/items/$ITEM/decision -H 'Content-Type: application/json' \
   -d '{"ktru_code": "99.99.04.000-00000001", "reason": "так в ТЗ"}' | jq '{status, final}'
 curl -s -X POST $API/jobs/$JOB/confirm-bulk -H 'Content-Type: application/json' -d '{"min_confidence": 0.85}'
