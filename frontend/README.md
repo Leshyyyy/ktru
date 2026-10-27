@@ -36,7 +36,7 @@ npm run dev                 # открыть http://localhost:5173
 - Порт 5173 занят — Vite сам возьмёт следующий свободный и напишет адрес в терминале.
 - На Windows PowerShell пишет «выполнение сценариев отключено» — запускайте команды в cmd или выполните `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-В docker-compose фронт собирается `Dockerfile` из этой папки: nginx отдаёт SPA и проксирует `/api/` в сервис `api:8000`.
+В docker-compose фронт собирается `Dockerfile` из этой папки: nginx без root (порт 8080) отдаёт SPA и проксирует `/api/` в сервис `api:8000`; имя `api` перерешивается при каждом запросе, поэтому перезапуск api не ломает фронт.
 
 ## Как устроено
 
