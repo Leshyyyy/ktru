@@ -341,6 +341,10 @@ class CatalogVersions:
             engine = self._versions.get(catalog_version_id)
             if engine is None and not catalog_version_id and self._versions:
                 engine = next(reversed(self._versions.values()))  # без версии — текущая (оценка, отладка)
+            if engine is None and "" in self._versions:
+                # Каталог из файла без указанной версии (get_pipeline() по умолчанию) обслуживает задачи любой
+                # версии — так работает режим, в котором migrate и worker-ml читают один и тот же файл.
+                engine = self._versions[""]
         if engine is None:
             error = f"Версия каталога {catalog_version_id or '(не указана)'} не загружена в ML-воркер."
             return [ClassificationResult(item_id=it.item_id, error=error) for it in items]

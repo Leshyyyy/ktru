@@ -55,3 +55,9 @@ def test_examples_reach_current_and_future_versions():
     assert _top(m, "v1", "ноутбук  для бухгалтерии").predictions[0].features["confirmed_vote"] == 1.0
     m.load_version("v2", V1)  # версия, загруженная позже, тоже знает пример
     assert _top(m, "v2", "Ноутбук для бухгалтерии").predictions[0].features["confirmed_vote"] == 1.0
+
+
+def test_file_catalog_without_version_serves_any_job_version():
+    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker())
+    m.load_version("", V1)  # как get_pipeline() с KTRU_CATALOG_PATH и без KTRU_CATALOG_VERSION_ID
+    assert _top(m, "3f1c0e2a-uuid-from-db").predictions[0].ktru_code == "77.77.01.000-00000001"
