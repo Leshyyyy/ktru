@@ -1,0 +1,6 @@
+# Сгенерированные файлы: GitHub сворачивает их в диффе PR и не учитывает в статистике языков.
+# Lock-файлы собирает uv (команда в backend/CLAUDE.md), 0001_initial.sql — копия contracts/schema.sql
+# (совпадение проверяет test_migrations_match_contract). Новые SQL-миграции пишутся руками — их не помечаем.
+backend/requirements.txt linguist-generated=true
+backend/requirements-dev.txt linguist-generated=true
+backend/migrations/sql/0001_initial.sql linguist-generated=true
