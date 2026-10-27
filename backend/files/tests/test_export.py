@@ -15,7 +15,13 @@ from backend.files.export import (
     export_xlsx,
     format_content_disposition,
 )
-from backend.files.schemas import ExportFormat, ExportItem
+from backend.files.parser import parse_rows
+from backend.files.schemas import (
+    ColumnMappingItem,
+    ColumnRole,
+    ExportFormat,
+    ExportItem,
+)
 
 
 @pytest.fixture
@@ -247,3 +253,203 @@ def test_export_job_results_format_source(sample_headers, sample_export_items):
     )
     assert res_pdf.filename.endswith(".xlsx")
     assert "spreadsheetml" in res_pdf.media_type
+
+
+def test_export_xlsx_source_file_with_header_row_and_gaps(tmp_path):
+    """
+    Тест краевого случая: экспорт в исходный XLSX файл с шапкой над таблицей (header_row > 0)
+    и пустыми строками между позициями.
+    Проверяет:
+    1. Колонки КТРУ дописываются в строку заголовков таблицы (header_row), а не в шапку над ней.
+    2. Коды КТРУ попадают в строки соответствующих позиций по item.row_index.
+    3. Пустые строки и шапка над таблицей не затрагиваются.
+    """
+    xlsx_path = tmp_path / "spec_test.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Спецификация"
+
+    # Строка 1: Шапка над таблицей
+    ws.cell(row=1, column=1, value="Спецификация №1")
+    # Строка 2: Заголовок таблицы (header_row = 1 в 0-based индексации)
+    ws.cell(row=2, column=1, value="Наименование")
+    ws.cell(row=2, column=2, value="Кол-во")
+    # Строка 3: Позиция 1 (row_index = 0 после заголовка)
+    ws.cell(row=3, column=1, value="Перчатки")
+    ws.cell(row=3, column=2, value="10")
+    # Строка 4: Пустая строка (row_index = 1 после заголовка, оставляем пустой)
+    # Строка 5: Позиция 2 (row_index = 2 после заголовка)
+    ws.cell(row=5, column=1, value="Бумага А4")
+    ws.cell(row=5, column=2, value="5")
+
+    wb.save(xlsx_path)
+
+    items = [
+        ExportItem(
+            row_index=0,
+            raw_row=["Перчатки", "10"],
+            ktru_code="КОД-Перчатки",
+            ktru_name="Перчатки медицинские",
+            confidence=0.95,
+            status="confirmed",
+        ),
+        ExportItem(
+            row_index=2,
+            raw_row=["Бумага А4", "5"],
+            ktru_code="КОД-Бумага А4",
+            ktru_name="Бумага офисная",
+            confidence=0.88,
+            status="processed",
+        ),
+    ]
+    headers = ["Наименование", "Кол-во"]
+
+    # 1. Проверяем явную передачу header_row=1
+    res_bytes = export_xlsx(
+        headers=headers,
+        items=items,
+        sheet_name="Спецификация",
+        source_path=xlsx_path,
+        header_row=1,
+    )
+
+    wb_out = openpyxl.load_workbook(io.BytesIO(res_bytes))
+    ws_out = wb_out["Спецификация"]
+
+    # Строка 1: "Спецификация №1", колонка 3 пустая (код не попал в шапку)
+    assert ws_out.cell(row=1, column=1).value == "Спецификация №1"
+    assert ws_out.cell(row=1, column=3).value is None
+
+    # Строка 2: Заголовок таблицы -> здесь должны появиться заголовки добавленных колонок
+    assert ws_out.cell(row=2, column=1).value == "Наименование"
+    assert ws_out.cell(row=2, column=2).value == "Кол-во"
+    assert ws_out.cell(row=2, column=3).value == "Код КТРУ"
+
+    # Строка 3: "Перчатки" -> код Перчаток
+    assert ws_out.cell(row=3, column=1).value == "Перчатки"
+    assert ws_out.cell(row=3, column=2).value == "10"
+    assert ws_out.cell(row=3, column=3).value == "КОД-Перчатки"
+
+    # Строка 4: Пустая строка остаётся пустой
+    assert ws_out.cell(row=4, column=1).value is None
+    assert ws_out.cell(row=4, column=3).value is None
+
+    # Строка 5: "Бумага А4" -> код Бумаги
+    assert ws_out.cell(row=5, column=1).value == "Бумага А4"
+    assert ws_out.cell(row=5, column=2).value == "5"
+    assert ws_out.cell(row=5, column=3).value == "КОД-Бумага А4"
+
+    # 2. Проверяем автоопределение header_row по headers при header_row=None
+    res_auto = export_xlsx(
+        headers=headers,
+        items=items,
+        sheet_name="Спецификация",
+        source_path=xlsx_path,
+        header_row=None,
+    )
+    wb_auto = openpyxl.load_workbook(io.BytesIO(res_auto))
+    ws_auto = wb_auto["Спецификация"]
+    assert ws_auto.cell(row=1, column=3).value is None
+    assert ws_auto.cell(row=2, column=3).value == "Код КТРУ"
+    assert ws_auto.cell(row=3, column=3).value == "КОД-Перчатки"
+    assert ws_auto.cell(row=4, column=3).value is None
+    assert ws_auto.cell(row=5, column=3).value == "КОД-Бумага А4"
+
+    # 3. Проверяем через export_job_results с форматом SOURCE
+    res_job = export_job_results(
+        items=items,
+        headers=headers,
+        export_format=ExportFormat.SOURCE,
+        original_filename="spec_test.xlsx",
+        source_path=xlsx_path,
+        sheet_name="Спецификация",
+        header_row=1,
+    )
+    wb_job = openpyxl.load_workbook(io.BytesIO(res_job.content))
+    ws_job = wb_job["Спецификация"]
+    assert ws_job.cell(row=1, column=3).value is None
+    assert ws_job.cell(row=2, column=3).value == "Код КТРУ"
+    assert ws_job.cell(row=3, column=3).value == "КОД-Перчатки"
+    assert ws_job.cell(row=4, column=3).value is None
+    assert ws_job.cell(row=5, column=3).value == "КОД-Бумага А4"
+
+
+def test_parse_and_export_roundtrip_xlsx(tmp_path):
+    """
+    Сквозной тест разбора и экспорта (parse_rows -> ExportItem -> export_xlsx).
+    Имитирует полный цикл обработки файла спецификации с шапкой и пустыми строками.
+    """
+    xlsx_path = tmp_path / "roundtrip.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Спецификация"
+
+    ws.append(["Спецификация №1", ""])  # Строка 1: заголовок документа
+    ws.append(["Наименование", "Кол-во"])  # Строка 2: заголовок таблицы
+    ws.append(["Перчатки", "10"])  # Строка 3: позиция
+    ws.append(["", ""])  # Строка 4: пустая строка
+    ws.append(["Бумага А4", "5"])  # Строка 5: позиция
+    wb.save(xlsx_path)
+
+    mapping = [
+        ColumnMappingItem(index=0, role=ColumnRole.NAME),
+        ColumnMappingItem(index=1, role=ColumnRole.QUANTITY),
+    ]
+
+    # 1. Разбираем файл
+    parsed_rows = parse_rows(xlsx_path, sheet_name="Спецификация", header_row=1, column_mapping=mapping)
+    assert len(parsed_rows) == 2
+    assert parsed_rows[0].row_index == 0
+    assert parsed_rows[0].raw_text == "Перчатки"
+    assert parsed_rows[1].row_index == 2
+    assert parsed_rows[1].raw_text == "Бумага А4"
+
+    # 2. Формируем результаты классификации
+    export_items = [
+        ExportItem(
+            row_index=parsed_rows[0].row_index,
+            raw_row=parsed_rows[0].raw_row,
+            ktru_code="КОД-Перчатки",
+            ktru_name="Перчатки медицинские",
+            confidence=0.99,
+            status="confirmed",
+        ),
+        ExportItem(
+            row_index=parsed_rows[1].row_index,
+            raw_row=parsed_rows[1].raw_row,
+            ktru_code="КОД-Бумага А4",
+            ktru_name="Бумага для печати",
+            confidence=0.91,
+            status="processed",
+        ),
+    ]
+
+    # 3. Экспортируем в исходный файл
+    out_bytes = export_xlsx(
+        headers=["Наименование", "Кол-во"],
+        items=export_items,
+        sheet_name="Спецификация",
+        source_path=xlsx_path,
+        header_row=1,
+    )
+
+    wb_res = openpyxl.load_workbook(io.BytesIO(out_bytes))
+    ws_res = wb_res["Спецификация"]
+
+    # Проверяем строки:
+    # 1. Шапка не задета
+    assert [ws_res.cell(row=1, column=c).value for c in range(1, 4)] == ["Спецификация №1", None, None]
+    # 2. Заголовок таблицы расширен добавленными колонками
+    assert ws_res.cell(row=2, column=1).value == "Наименование"
+    assert ws_res.cell(row=2, column=2).value == "Кол-во"
+    assert ws_res.cell(row=2, column=3).value == "Код КТРУ"
+    # 3. Перчатки получили свой код
+    assert ws_res.cell(row=3, column=1).value == "Перчатки"
+    assert ws_res.cell(row=3, column=2).value == "10"
+    assert ws_res.cell(row=3, column=3).value == "КОД-Перчатки"
+    # 4. Пустая строка осталась пустой
+    assert [ws_res.cell(row=4, column=c).value for c in range(1, 4)] == [None, None, None]
+    # 5. Бумага А4 получила свой код
+    assert ws_res.cell(row=5, column=1).value == "Бумага А4"
+    assert ws_res.cell(row=5, column=2).value == "5"
+    assert ws_res.cell(row=5, column=3).value == "КОД-Бумага А4"
