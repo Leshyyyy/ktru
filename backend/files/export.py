@@ -16,13 +16,16 @@
 import csv
 import io
 import json
+from copy import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
+from backend.files.clean import clean_cell
 from backend.files.exceptions import UnreviewedItemsError, UnsupportedTypeError
 from backend.files.schemas import ExportFormat, ExportItem, ExportResult
 
@@ -75,8 +78,9 @@ def format_content_disposition(filename: str) -> str:
     """
     Формирует заголовок Content-Disposition по RFC 5987 / RFC 6266
     с корректной кодировкой кириллических имён файлов.
+    Запасное имя filename="..." должно быть строго ASCII (latin-1) для Starlette/ASGI.
     """
-    ascii_name = "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename) or "export"
+    ascii_name = "".join(c if (c.isascii() and (c.isalnum() or c in "._-")) else "_" for c in filename) or "export"
     quoted_name = quote(filename.encode("utf-8"))
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted_name}'
 
@@ -142,14 +146,17 @@ def export_csv(
 
 def export_xlsx(
     headers: List[str],
-    items: List[ExportItem],
+    items: List[Union[ExportItem, Dict[str, Any]]],
     sheet_name: Optional[str] = None,
     source_path: Optional[Union[str, Path]] = None,
+    header_row: Optional[int] = None,
 ) -> bytes:
     """
     Экспортирует результат в XLSX. Все ячейки сохраняются строкового типа ('s'),
     что полностью исключает исполнение формул без визуального добавления апострофа.
     """
+    normalized_items = [_normalize_item(i) for i in items]
+
     # Если передан исходный XLSX-файл, пробуем дополнить его существующий лист
     if source_path:
         p = Path(source_path)
@@ -157,18 +164,75 @@ def export_xlsx(
             try:
                 wb = openpyxl.load_workbook(str(p))
                 ws = wb[sheet_name] if (sheet_name and sheet_name in wb.sheetnames) else wb.active
+
+                # Определяем строку заголовка в Excel (1-based)
+                if header_row is not None:
+                    effective_header_row = max(0, header_row)
+                else:
+                    effective_header_row = 0
+                    if headers:
+                        clean_target_headers = [clean_cell(h) for h in headers]
+                        for r in range(1, min(ws.max_row + 1, 50)):
+                            row_vals = [clean_cell(ws.cell(row=r, column=c).value) for c in range(1, len(headers) + 1)]
+                            if row_vals == clean_target_headers:
+                                effective_header_row = r - 1
+                                break
+
+                header_excel_row = effective_header_row + 1
+
                 # Дописываем колонки справа
                 start_col = ws.max_column + 1
-                for c_idx, h in enumerate(ADDED_COLUMNS):
-                    cell = ws.cell(row=1, column=start_col + c_idx, value=str(h))
-                    cell.font = Font(bold=True)
-                    cell.data_type = "s"
+                ref_header_cell = ws.cell(row=header_excel_row, column=start_col - 1) if start_col > 1 else None
 
-                for r_idx, item in enumerate(items, start=2):
+                for c_idx, h in enumerate(ADDED_COLUMNS):
+                    cell = ws.cell(row=header_excel_row, column=start_col + c_idx, value=str(h))
+                    cell.data_type = "s"
+                    if ref_header_cell and ref_header_cell.has_style:
+                        try:
+                            if ref_header_cell.font:
+                                cell.font = copy(ref_header_cell.font)
+                                cell.font.bold = True
+                            else:
+                                cell.font = Font(bold=True)
+                            if ref_header_cell.fill:
+                                cell.fill = copy(ref_header_cell.fill)
+                            if ref_header_cell.alignment:
+                                cell.alignment = copy(ref_header_cell.alignment)
+                            if ref_header_cell.border:
+                                cell.border = copy(ref_header_cell.border)
+                        except Exception:
+                            cell.font = Font(bold=True)
+                    else:
+                        cell.font = Font(bold=True)
+
+                for item in normalized_items:
+                    target_row = header_excel_row + 1 + item.row_index
+                    ref_data_cell = ws.cell(row=target_row, column=start_col - 1) if start_col > 1 else None
                     added_vals = _extract_added_values(item)
                     for c_idx, val in enumerate(added_vals):
-                        cell = ws.cell(row=r_idx, column=start_col + c_idx, value=str(val))
+                        cell = ws.cell(row=target_row, column=start_col + c_idx, value=str(val))
                         cell.data_type = "s"
+                        if ref_data_cell and ref_data_cell.has_style:
+                            try:
+                                if ref_data_cell.font:
+                                    cell.font = copy(ref_data_cell.font)
+                                if ref_data_cell.alignment:
+                                    cell.alignment = copy(ref_data_cell.alignment)
+                                if ref_data_cell.border:
+                                    cell.border = copy(ref_data_cell.border)
+                            except Exception:
+                                pass
+
+                # Автоподбор ширины для добавленных колонок
+                for c_idx in range(len(ADDED_COLUMNS)):
+                    col_idx = start_col + c_idx
+                    col_letter = get_column_letter(col_idx)
+                    max_len = 0
+                    for r in range(1, ws.max_row + 1):
+                        v = ws.cell(row=r, column=col_idx).value
+                        if v:
+                            max_len = max(max_len, len(str(v)))
+                    ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 50)
 
                 buf = io.BytesIO()
                 wb.save(buf)
@@ -196,7 +260,7 @@ def export_xlsx(
         cell.data_type = "s"
 
     # Строки данных
-    for r_idx, item in enumerate(items, start=2):
+    for r_idx, item in enumerate(normalized_items, start=2):
         row_vals = item.raw_row + _extract_added_values(item)
         for c_idx, val in enumerate(row_vals, start=1):
             cell = ws.cell(row=r_idx, column=c_idx, value=str(val) if val is not None else "")
@@ -271,6 +335,7 @@ def export_job_results(
     sheet_name: Optional[str] = None,
     allow_unreviewed: bool = True,
     csv_delimiter: str = ";",
+    header_row: Optional[int] = None,
 ) -> ExportResult:
     """
     Универсальная функция выгрузки результатов задачи обработки спецификации (FR-7.1, FR-7.2).
@@ -283,6 +348,7 @@ def export_job_results(
     :param sheet_name: Название листа спецификации
     :param allow_unreviewed: Разрешить ли выгрузку при наличии непроверенных позиций
     :param csv_delimiter: Разделитель для формата CSV (по умолчанию ';')
+    :param header_row: Номер строки заголовка в исходном файле (с 0)
     :return: ExportResult с байтами, media_type, именем файла и заголовками
     """
     normalized_items = [_normalize_item(i) for i in items]
@@ -332,7 +398,13 @@ def export_job_results(
     if target_format == ExportFormat.XLSX:
         out_filename = f"{stem}_ktru.xlsx"
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        content = export_xlsx(headers, normalized_items, sheet_name=sheet_name, source_path=source_path)
+        content = export_xlsx(
+            headers,
+            normalized_items,
+            sheet_name=sheet_name,
+            source_path=source_path,
+            header_row=header_row,
+        )
     elif target_format == ExportFormat.CSV:
         out_filename = f"{stem}_ktru.csv"
         media_type = "text/csv; charset=utf-8"
