@@ -46,3 +46,17 @@ class LimitExceededError(FileParsingError):
 
     def __init__(self, message: str = "Превышен лимит строк (максимум 1000 строк в задаче или 5000 в файле). Разбейте файл на части.", details: Optional[Any] = None) -> None:
         super().__init__(message, code="limit_exceeded", details=details)
+
+
+class UnreviewedItemsError(FileParsingError):
+    """Остались непроверенные позиции при allow_unreviewed=false (409)."""
+
+    def __init__(self, message: str = "Остались непроверенные позиции.", details: Optional[Any] = None) -> None:
+        super().__init__(message, code="unreviewed_items", details=details)
+
+
+class InvalidStateError(FileParsingError):
+    """Действие невозможно в текущем статусе задачи (409)."""
+
+    def __init__(self, message: str = "Действие невозможно в текущем статусе задачи.", details: Optional[Any] = None) -> None:
+        super().__init__(message, code="invalid_state", details=details)
