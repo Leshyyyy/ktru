@@ -38,18 +38,25 @@ export function DecisionQueueProvider({ children }: { children: ReactNode }) {
   pendingRef.current = pending;
   const seq = useRef(0);
 
+  /**
+   * keepalive — для отправки при закрытии вкладки: обычный fetch браузер обрывает вместе со страницей,
+   * а запрос с keepalive доживает до сервера (тело до 64 КБ, наши — сотни байт).
+   */
   const send = useCallback(
-    async (p: Pending) => {
+    async (p: Pending, keepalive = false) => {
       setPending((list) => list.filter((x) => x.id !== p.id));
       const d = p.decision;
       try {
         const item =
           d.kind === "confirm"
-            ? await unwrap(api.POST("/items/{item_id}/confirm", { params: { path: { item_id: d.item.item_id } } }))
+            ? await unwrap(
+                api.POST("/items/{item_id}/confirm", { params: { path: { item_id: d.item.item_id } }, keepalive }),
+              )
             : await unwrap(
                 api.PUT("/items/{item_id}/decision", {
                   params: { path: { item_id: d.item.item_id } },
                   body: { ktru_code: d.code, reason: d.reason || null },
+                  keepalive,
                 }),
               );
         qc.setQueryData(keys.item(item.item_id), item);
@@ -95,7 +102,7 @@ export function DecisionQueueProvider({ children }: { children: ReactNode }) {
     const flush = () =>
       pendingRef.current.forEach((p) => {
         clearTimeout(p.timer);
-        void send(p);
+        void send(p, true);
       });
     window.addEventListener("pagehide", flush);
     return () => {
