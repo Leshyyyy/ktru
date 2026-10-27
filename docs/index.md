@@ -10,4 +10,5 @@
 analytics/index
 contracts/index
 guide/dev
+team/index
 ```
