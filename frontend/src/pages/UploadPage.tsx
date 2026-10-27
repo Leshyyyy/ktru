@@ -35,7 +35,7 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiRequestError } from "../api/client";
-import { useClassify, useConfig, useCreateJob, useUploadFile } from "../api/hooks";
+import { useClassify, useConfig, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
 import type { ClassifyResult, ColumnRole, FileInfo, Sheet } from "../api/types";
 import { ConfidenceBadge, KtruCode } from "../components/badges";
 import { fileSize, plural, ROLE } from "../lib/format";
@@ -179,6 +179,8 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
   const navigate = useNavigate();
   const config = useConfig().data;
   const createJob = useCreateJob();
+  // Пока система готовится (модели и каталог грузятся), запускать обработку бессмысленно — бэкенд ответит 503.
+  const notReady = useHealth().data?.ready === false;
   const [sheetName, setSheetName] = useState(info.sheets[0]?.name ?? "");
   const sheet = info.sheets.find((s) => s.name === sheetName) ?? info.sheets[0];
   const [mapping, setMapping] = useState<Mapping>(() => initialMapping(sheet, info));
@@ -351,10 +353,10 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
               size="md"
               leftSection={<IconPlayerPlay size={18} />}
               onClick={start}
-              disabled={!!error || tooMany}
+              disabled={!!error || tooMany || notReady}
               loading={createJob.isPending}
             >
-              Запустить обработку
+              Начать обработку
             </Button>
           </Group>
           <Collapse in={advanced}>

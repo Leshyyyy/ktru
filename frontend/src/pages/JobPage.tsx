@@ -9,13 +9,12 @@ import {
   Center,
   CloseButton,
   Group,
+  Kbd,
   Menu,
   NumberInput,
   Pagination,
   Progress,
   ScrollArea,
-  SegmentedControl,
-  Select,
   SimpleGrid,
   Skeleton,
   Stack,
@@ -27,7 +26,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
-import { useDebouncedValue } from "@mantine/hooks";
+import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
@@ -40,13 +39,12 @@ import {
   IconSearch,
   IconUser,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import {
   isActive,
   useCancelJob,
   useConfirmBulk,
-  useConfirmItem,
   useExport,
   useItems,
   useJob,
@@ -63,8 +61,9 @@ import {
   KtruCode,
   useThresholds,
 } from "../components/badges";
+import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
 import { ItemDrawer } from "../components/ItemDrawer";
-import { BAND, dateTime, duration, FLAG, ITEM_STATUS, pct, plural } from "../lib/format";
+import { BAND, dateTime, duration, FLAG, pct, plural } from "../lib/format";
 
 const PAGE_SIZE = 50;
 
@@ -119,17 +118,20 @@ function JobView({ job }: { job: Job }) {
   const [q, setQ] = useState(sp.get("q") ?? "");
   const [debouncedQ] = useDebouncedValue(q, 300);
 
-  const setParam = (key: string, value: string | undefined | null) =>
-    setSp(
-      (prev) => {
-        const n = new URLSearchParams(prev);
-        if (value) n.set(key, value);
-        else n.delete(key);
-        if (key !== "page") n.delete("page");
-        return n;
-      },
-      { replace: true },
-    );
+  // setSearchParams((prev) => …) получает параметры на момент рендера, и два быстрых клика подряд
+  // затирают друг друга. Поэтому держим последнюю версию в ref до следующего рендера.
+  const latest = useRef<URLSearchParams | null>(null);
+  useEffect(() => {
+    latest.current = null;
+  }, [sp]);
+  const setParam = (key: string, value: string | undefined | null) => {
+    const n = new URLSearchParams(latest.current ?? sp);
+    if (value) n.set(key, value);
+    else n.delete(key);
+    if (key !== "page") n.delete("page");
+    latest.current = n;
+    setSp(n, { replace: true });
+  };
 
   useEffect(() => {
     if ((sp.get("q") ?? "") !== debouncedQ) setParam("q", debouncedQ || null);
@@ -155,6 +157,23 @@ function JobView({ job }: { job: Job }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const idx = list?.items.findIndex((i) => i.item_id === openId) ?? -1;
   const filtered = !!(band || status || flag || group_id || debouncedQ);
+  const withOverlay = useWithOverlay();
+
+  /** Следующая позиция «Требует проверки» ниже текущей на странице; если таких нет — просто следующая. */
+  const nextDisputed = (): string | null => {
+    const rest = (list?.items ?? []).slice(idx + 1).map(withOverlay);
+    return (rest.find((i) => i.status === "needs_review") ?? rest[0])?.item_id ?? null;
+  };
+
+  // Карточка закрыта — J/K и Enter открывают строки таблицы.
+  useHotkeys(
+    openId
+      ? []
+      : [
+          ["j", () => list?.items[0] && setOpenId(list.items[0].item_id)],
+          ["Enter", () => list?.items[0] && setOpenId(list.items[0].item_id)],
+        ],
+  );
 
   return (
     <Stack gap="lg">
@@ -190,10 +209,11 @@ function JobView({ job }: { job: Job }) {
       </Stack>
 
       {job.effective_mode === "degraded" && (
-        <Alert color="blue" variant="light" icon={<IconInfoCircle />}>
-          Языковая модель сейчас недоступна — позиции обработаны правилами и поиском. На «грязных» описаниях точность
-          может быть ниже, поэтому жёлтых позиций может быть больше обычного.
-        </Alert>
+        <Tooltip label="Языковая модель недоступна: позиции обработаны правилами и поиском. На «грязных» описаниях жёлтых позиций может быть больше.">
+          <span className="k-mode">
+            <IconInfoCircle size={14} /> Без LLM: работают правила и реранкер
+          </span>
+        </Tooltip>
       )}
       {job.status === "failed" && (
         <Alert color="red" title="Обработка не удалась">
@@ -221,42 +241,37 @@ function JobView({ job }: { job: Job }) {
             rightSection={q ? <CloseButton size="sm" onClick={() => setQ("")} aria-label="Очистить" /> : null}
             w={{ base: "100%", sm: 280 }}
           />
-          {/* На телефоне фильтр по цвету — плитки сводки выше, сегменты не помещаются. */}
-          <SegmentedControl
-            visibleFrom="sm"
-            size="sm"
-            value={band ?? "all"}
-            onChange={(v) => setParam("band", v === "all" ? null : v)}
-            data={[
-              { value: "all", label: "Все" },
-              { value: "green", label: "Уверенно" },
-              { value: "yellow", label: "Проверить" },
-              { value: "red", label: "Сомнительно" },
-            ]}
-          />
-          <Select
-            placeholder="Статус"
-            size="sm"
-            w={180}
-            clearable
-            value={status ?? null}
-            onChange={(v) => setParam("status", v)}
-            data={(Object.keys(ITEM_STATUS) as ItemStatus[]).map((s) => ({ value: s, label: ITEM_STATUS[s].label }))}
-          />
-          <Select
-            placeholder="Предупреждения"
-            size="sm"
-            w={220}
-            clearable
-            value={flag ?? null}
-            onChange={(v) => setParam("flag", v)}
-            data={(Object.keys(FLAG) as ItemFlag[]).map((f) => ({ value: f, label: FLAG[f].label }))}
-          />
-          <Switch
-            label="Сначала сомнительные"
-            checked={sort === "confidence_asc"}
-            onChange={(e) => setParam("sort", e.currentTarget.checked ? "confidence_asc" : null)}
-          />
+          <FilterChip
+            active={sort === "confidence_asc"}
+            onClick={() => setParam("sort", sort === "confidence_asc" ? null : "confidence_asc")}
+          >
+            Сначала спорные
+          </FilterChip>
+          <Menu position="bottom-start" withinPortal>
+            <Menu.Target>
+              <FilterChip active={!!flag}>{flag ? FLAG[flag].label : "С предупреждениями"}</FilterChip>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {(Object.keys(FLAG) as ItemFlag[]).map((f) => (
+                <Menu.Item key={f} onClick={() => setParam("flag", f)}>
+                  {FLAG[f].label}
+                </Menu.Item>
+              ))}
+              {flag && (
+                <Menu.Item c="dimmed" onClick={() => setParam("flag", null)}>
+                  Показать все
+                </Menu.Item>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+          {job.failed_items > 0 && (
+            <FilterChip
+              active={status === "failed"}
+              onClick={() => setParam("status", status === "failed" ? null : "failed")}
+            >
+              Ошибки · {job.failed_items}
+            </FilterChip>
+          )}
           {group_id && (
             <Badge
               size="lg"
@@ -268,6 +283,9 @@ function JobView({ job }: { job: Job }) {
               Только одинаковые товары
             </Badge>
           )}
+          <Text size="xs" c="var(--k-faint)" ml="auto" visibleFrom="md">
+            <Kbd size="xs">J</Kbd> <Kbd size="xs">K</Kbd> — по строкам, <Kbd size="xs">Enter</Kbd> — подтвердить
+          </Text>
         </Group>
 
         <ItemsTable
@@ -319,6 +337,8 @@ function JobView({ job }: { job: Job }) {
         fromList={idx >= 0 ? list?.items[idx] : undefined}
         job={job}
         onClose={() => setOpenId(null)}
+        onAfterDecision={() => setOpenId(nextDisputed())}
+        onGroup={(g) => setParam("group", g)}
         onPrev={idx > 0 ? () => setOpenId(list!.items[idx - 1].item_id) : undefined}
         onNext={
           list && idx >= 0 && idx < list.items.length - 1 ? () => setOpenId(list.items[idx + 1].item_id) : undefined
@@ -438,6 +458,24 @@ function Tile(p: {
   return p.hint ? <Tooltip label={p.hint}>{body}</Tooltip> : body;
 }
 
+/** Фильтр-чип из макета: выбранный подсвечен лаймовым. */
+const FilterChip = forwardRef<HTMLButtonElement, { active: boolean; onClick?: () => void; children: ReactNode }>(
+  function FilterChip({ active, onClick, children, ...rest }, ref) {
+    return (
+      // Menu.Target передаёт свои className и обработчики — объединяем, а не затираем.
+      <UnstyledButton
+        ref={ref}
+        {...rest}
+        className={["k-chip", (rest as { className?: string }).className].filter(Boolean).join(" ")}
+        data-active={active || undefined}
+        onClick={onClick ?? (rest as { onClick?: () => void }).onClick}
+      >
+        {children}
+      </UnstyledButton>
+    );
+  },
+);
+
 // ---------------------------------------------------------------- таблица
 
 function ItemsTable({
@@ -455,7 +493,8 @@ function ItemsTable({
   onOpen: (id: string) => void;
   onGroup: (groupId: string) => void;
 }) {
-  const confirm = useConfirmItem();
+  const { decide } = useDecisions();
+  const withOverlay = useWithOverlay();
   return (
     <ScrollArea type="auto">
       <Table
@@ -486,7 +525,7 @@ function ItemsTable({
                 </Table.Td>
               </Table.Tr>
             ))}
-          {items?.map((it) => {
+          {items?.map(withOverlay).map((it) => {
             const canConfirm = it.status === "processed" || it.status === "needs_review";
             return (
               <Table.Tr
@@ -557,16 +596,18 @@ function ItemsTable({
                   <FlagChips flags={it.flags} />
                 </Table.Td>
                 <Table.Td onClick={(e) => e.stopPropagation()}>
-                  {canConfirm && (
+                  {canConfirm && it.predictions[0] && (
                     <Tooltip label="Подтвердить предложенный код">
                       <ActionIcon
                         variant="light"
                         onClick={() =>
-                          confirm.mutate(it.item_id, {
-                            onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
+                          decide({
+                            kind: "confirm",
+                            item: it,
+                            code: it.predictions[0].ktru_code,
+                            name: it.predictions[0].name,
                           })
                         }
-                        loading={confirm.isPending && confirm.variables === it.item_id}
                         aria-label="Подтвердить"
                       >
                         <IconCheck size={16} />

@@ -238,11 +238,26 @@ export function useCatalogSearch(q: string, versionId?: string) {
   });
 }
 
+export function useCatalogItem(code: string | null, versionId?: string) {
+  return useQuery({
+    queryKey: ["catalog-item", code, versionId],
+    queryFn: () =>
+      unwrap(
+        api.GET("/catalog/items/{ktru_code}", {
+          params: { path: { ktru_code: code! }, query: { version_id: versionId } },
+        }),
+      ),
+    enabled: !!code,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useCatalogVersions() {
   return useQuery({
     queryKey: ["catalog-versions"],
     queryFn: () => unwrap(api.GET("/catalog/versions")),
     staleTime: 60_000,
+    retry: false,
   });
 }
 

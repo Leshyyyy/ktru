@@ -99,9 +99,14 @@ function CatalogPill() {
   const versions = useCatalogVersions();
   const v = versions.data?.items.find((x) => x.status === "ready");
   const state = health.isError ? "error" : health.data?.ready ? "ok" : "wait";
+  // Пока у бэкенда нет /catalog/versions, берём описание каталога из /health.
   const label = v
     ? `Каталог от ${dateFmt.format(new Date(v.loaded_at))} · ${v.items_count.toLocaleString("ru-RU")} кодов`
-    : "Каталог не загружен";
+    : health.data?.components.catalog?.detail
+      ? `Каталог: ${health.data.components.catalog.detail}`
+      : versions.isLoading || health.isLoading
+        ? "Каталог…"
+        : "Каталог не загружен";
   const hint =
     state === "error"
       ? "Нет связи с сервером"
