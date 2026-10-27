@@ -11,6 +11,7 @@
 **/.pytest_cache
 **/.ruff_cache
 backend/tests
+backend/files/tests
 backend/requirements*.in
 backend/requirements-dev.txt
 ml/tests

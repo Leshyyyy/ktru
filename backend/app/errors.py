@@ -61,6 +61,26 @@ def not_ready() -> ApiError:
     return ApiError(503, "not_ready", "Система ещё готовится. Повторите через минуту.", headers={"Retry-After": "30"})
 
 
+def file_too_large(max_file_mb: int) -> ApiError:
+    return ApiError(413, "file_too_large", _file_too_large_message(max_file_mb))
+
+
+def mapping_invalid(message: str, **details: Any) -> ApiError:
+    return ApiError(422, "mapping_invalid", message, details or None)
+
+
+_FILE_ERROR_STATUS = {"file_too_large": 413, "unsupported_file_type": 415}
+
+
+def file_error(code: ErrorCode, message: str, details: dict[str, Any] | None) -> ApiError:
+    """Ошибка разбора файла (backend.core.uploads.file_error) → ответ: 413, 415, остальное — 422."""
+    return ApiError(_FILE_ERROR_STATUS.get(code, 422), code, message, details)
+
+
+def _file_too_large_message(max_file_mb: int) -> str:
+    return f"Файл больше {max_file_mb} МБ. Разбейте его на части."
+
+
 class BodyTooLarge(Exception):
     """Тело запроса больше лимита; бросает BodySizeLimitMiddleware при чтении тела."""
 
@@ -87,7 +107,7 @@ def internal_error_response(request_id: str | None) -> JSONResponse:
 
 
 def file_too_large_response(max_file_mb: int) -> JSONResponse:
-    return error_response(413, "file_too_large", f"Файл больше {max_file_mb} МБ. Разбейте его на части.")
+    return error_response(413, "file_too_large", _file_too_large_message(max_file_mb))
 
 
 def install_error_handlers(app: FastAPI, *, max_file_mb: int) -> None:
@@ -182,6 +202,9 @@ def _describe(error: dict[str, Any], subject: str) -> str:
     if kind == "value_error":
         # Свои валидаторы пишут сообщение по-русски; pydantic добавляет к нему «Value error, ».
         text = str(error.get("msg", "")).removeprefix("Value error, ").rstrip(".")
+        if text.startswith("Expected UploadFile"):
+            # Часть multipart без имени файла FastAPI получает как строку, а не как файл.
+            return f"в {subject} нужно передать файл"
         return f"{subject}: {text}" if text else f"{subject} заполнено неверно"
     return f"{subject} заполнено неверно"
 

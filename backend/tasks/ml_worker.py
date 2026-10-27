@@ -11,18 +11,28 @@ import logging
 import os
 import socket
 import time
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from celery import Task
 from celery.signals import worker_process_init, worker_process_shutdown
 from redis import Redis
 
+from backend.core import processing
+from backend.core.db import worker_engine
+from backend.core.logs import job_id_var
 from backend.core.ml import describe_mode, load_pipeline
+from backend.core.queue import PROCESS_CHUNK
 from backend.core.readiness import Heartbeat
 
 from .celery_app import app, settings
 
 log = logging.getLogger(__name__)
+
+# Паузы между попытками пачки (раздел 6 аналитики); после последней позиции пачки получают статус failed.
+RETRY_DELAYS_S = (5, 20, 60)
+CHUNK_FAILED = "Не удалось обработать позицию за несколько попыток. Код можно указать вручную."
 
 # Загрузка моделей идёт в worker_process_init, а Celery по умолчанию ждёт старта дочернего процесса 4 с.
 app.conf.worker_proc_alive_timeout = settings.ml_worker_init_timeout_s
@@ -33,6 +43,30 @@ _state: dict[str, Any] = {"pipeline": None, "error": None, "heartbeat": None}
 def get_pipeline() -> Any:
     """Конвейер этого процесса для задач очереди ml. None — модели не загрузились (см. /health)."""
     return _state["pipeline"]
+
+
+@app.task(name=PROCESS_CHUNK, bind=True, ignore_result=True, max_retries=len(RETRY_DELAYS_S))
+def process_chunk(self: Task, job_id: str, item_ids: list[str]) -> None:
+    try:
+        job_uuid, item_uuids = uuid.UUID(job_id), [uuid.UUID(i) for i in item_ids]
+    except (TypeError, ValueError):
+        log.error("process_chunk: некорректные идентификаторы")
+        return
+    token = job_id_var.set(job_id)
+    try:
+        pipeline = get_pipeline()
+        if pipeline is None:
+            raise RuntimeError("Конвейер не загружен")
+        processing.process_chunk(worker_engine(settings), settings, pipeline, job_uuid, item_uuids)
+    except Exception as exc:
+        attempt = self.request.retries
+        if attempt < len(RETRY_DELAYS_S):
+            log.warning("Пачка не обработана, повторю", extra={"attempt": attempt + 1}, exc_info=True)
+            raise self.retry(exc=exc, countdown=RETRY_DELAYS_S[attempt]) from exc
+        log.exception("Пачка не обработана после всех попыток")
+        processing.fail_chunk(worker_engine(settings), job_uuid, item_uuids, CHUNK_FAILED)
+    finally:
+        job_id_var.reset(token)
 
 
 @worker_process_init.connect

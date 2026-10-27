@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import logging
+from backend.core.db import worker_engine
+from backend.core.processing import requeue_stale_jobs
+from backend.core.queue import CeleryQueue
 
-from .celery_app import app
-
-log = logging.getLogger(__name__)
+from .celery_app import app, settings
 
 
 @app.task(name="io.watchdog", ignore_result=True)
 def watchdog() -> None:
-    """Задачи в queued, parsing или processing без обновлений дольше 5 минут → заново в очередь их pending-позиции.
-
-    Логика появится вместе с parse_file и process_chunk (план на 29.10), пока задач нет — проверять нечего.
+    """Задачи в queued, parsing или processing без обновлений дольше 5 минут → заново в очередь их разбор
+    или pending-позиции (backend/core/processing.py: requeue_stale_jobs).
     """
-    log.debug("watchdog: задач обработки пока нет")
+    requeue_stale_jobs(worker_engine(settings), CeleryQueue(app))

@@ -17,6 +17,8 @@ from sqlalchemy.engine import URL
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_CATALOG = REPO_ROOT / "contracts" / "fixtures" / "fake_catalog.jsonl"
+# Форматы, которые умеет читать backend/files. Какие из них принимает POST /files — UPLOAD_EXTENSIONS.
+READABLE_EXTENSIONS = ("xlsx", "xls", "csv", "pdf")
 
 
 class ConfigError(RuntimeError):
@@ -48,6 +50,8 @@ class Settings(BaseSettings):
     redis_password: SecretStr | None = None
 
     upload_dir: Path = Path("/data/uploads")
+    # Через запятую. xls читается, но по договорённости команды пока не принимается (вопрос в PR #5).
+    upload_extensions: Annotated[list[str], NoDecode] = ["xlsx", "csv", "pdf"]
     max_file_mb: int = Field(50, gt=0)
     max_rows: int = Field(5000, gt=0)
     max_items_per_job: int = Field(1000, gt=0)
@@ -76,12 +80,22 @@ class Settings(BaseSettings):
         # «LLM_API_KEY=» и подобные пустые строки в .env означают «не задано», а не пустой пароль или путь «.».
         return None if isinstance(value, str) and not value.strip() else value
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "upload_extensions", mode="before")
     @classmethod
-    def _split_origins(cls, value: object) -> object:
+    def _split_list(cls, value: object) -> object:
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+    @field_validator("upload_extensions")
+    @classmethod
+    def _check_extensions(cls, extensions: list[str]) -> list[str]:
+        normalized = [ext.lower().removeprefix(".") for ext in extensions]
+        unknown = [ext for ext in normalized if ext not in READABLE_EXTENSIONS]
+        if unknown or not normalized:
+            readable = ", ".join(READABLE_EXTENSIONS)
+            raise ValueError(f"UPLOAD_EXTENSIONS: нужен непустой список из {readable}; неизвестные: {unknown}")
+        return list(dict.fromkeys(normalized))
 
     @field_validator("cors_origins")
     @classmethod

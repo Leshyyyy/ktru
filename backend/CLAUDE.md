@@ -6,17 +6,23 @@
 
 | Путь | Что там |
 | --- | --- |
-| `app/main.py` | `create_app()`: роутеры под `/api/v1`, обработчики ошибок, middleware, lifespan (движок БД, Redis) |
+| `app/main.py` | `create_app()`: роутеры под `/api/v1`, обработчики ошибок, middleware, lifespan (движок БД, Redis, очередь Celery) |
 | `app/errors.py` | `ApiError` и единый формат `{"error": {"code", "message", "details"}}`; валидация → 400 `invalid_request` с текстом по-русски |
 | `app/middleware.py` | request_id и строка лога на запрос, заголовки безопасности, лимит тела (413 `file_too_large`) |
-| `app/routes/` | маршруты по тегам `openapi.yaml`; сейчас `system.py` (`/health`, `/config`) |
+| `app/routes/` | маршруты по тегам `openapi.yaml`: `files.py` (`POST /files`), `jobs.py` (`/jobs`, отмена, удаление), `items.py` (чтение позиций), `system.py` (`/health`, `/config`) |
+| `app/views.py` | сборка ответов `Job` и `Item` из таблиц: summary, ETA, цвет, предсказания с наименованиями из каталога задачи, `final` из `v_item_final` |
 | `app/health.py` | проверки для `/health`: база, Redis, готовность worker-ml, каталог |
 | `core/settings.py` | все переменные окружения (`Settings`); список с пояснениями — `.env.example` |
 | `core/models.py` | SQLAlchemy-модели таблиц `schema.sql` (схему создают миграции, не модели) |
 | `core/catalog.py` | импорт каталога из JSONL (`CatalogRow`) — для migrate и будущего `POST /catalog/import` |
 | `core/ml.py` | `load_pipeline()` (stub/real), `describe_mode()`, `check_results()` — проверка ответа ML по контракту |
 | `core/readiness.py` | готовность worker-ml в Redis (heartbeat с TTL) |
-| `tasks/celery_app.py` | Celery: очереди `io`/`ml`, JSON, `acks_late`, лимиты, beat; `ml_worker.py` — вход worker-ml |
+| `core/uploads.py` | хранилище файлов на томе uploads (`<file_id>.<расширение>`), очистка имени, ошибки `backend/files` → код и текст для человека |
+| `core/queue.py` | постановка задач по имени (`io.parse_file`, `ml.process_chunk`); в тестах — `FakeQueue` из `tests/conftest.py` |
+| `core/processing.py` | работа воркеров: разбор → items, пачки по 50 через ML → predictions, итоговый статус, watchdog; цвет и статус по порогам |
+| `tasks/celery_app.py` | Celery: `create_celery(settings)`, очереди `io`/`ml`, JSON, `acks_late`, лимиты, beat |
+| `tasks/jobs.py`, `tasks/watchdog.py` | задачи io: `io.parse_file`, `io.watchdog`; логика — в `core/processing.py` |
+| `tasks/ml_worker.py` | вход worker-ml: загрузка конвейера, готовность, `ml.process_chunk` с ретраями 5/20/60 с |
 | `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`) |
 | `migrate.py` | контейнер migrate: миграции → роль приложения → стартовый каталог |
 
@@ -59,6 +65,8 @@ services:
 - Схема меняется только новой ревизией Alembic вместе с PR в `contracts/schema.sql`; тест `test_migrations_match_contract` сверяет их.
 - Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каждый ответ ML проходит `check_results()`.
 - Аргументы задач Celery — только JSON-типы (id, строки); воркер меняет позиции только `WHERE status = 'pending'`.
+- Переход статуса задачи — один `UPDATE ... WHERE status IN (...)`: повторная доставка, гонка двух воркеров, отмена и удаление посреди работы не должны ломать состояние (тесты — `tests/test_processing.py`).
+- Порог green сравнивается со значением колонки `real` как `real` (`processing.as_real`, в SQL — `CAST(... AS real)`): иначе статус от воркера и цвет в API разойдутся ровно на пороге.
 - Секреты — только из переменных окружения; каждому сервису compose передаются только нужные ему (ключ LLM — только worker-ml, пароль владельца БД — только migrate). В логах не бывает паролей и текстов исключений для пользователя.
 - Данные КТРУ (`data/`, `context/`) не коммитим и не кладём в тесты: в тестах — `contracts/fixtures/` и искусственные строки.
 
@@ -69,3 +77,5 @@ services:
 - Движок БД и клиент Redis в воркере создаются после fork (`core/db.worker_engine`), не на уровне модуля.
 - `Settings.model_copy(update=...)` не валидирует: секреты в тестах передавайте как `SecretStr`.
 - FastAPI превращает любую ошибку чтения тела в 400 — превышение лимита распознаётся по `__cause__` (`BodyTooLarge`) и остаётся 413.
+- `nullable: true` вместе с `enum` или `allOf` валидатор OpenAPI 3.0 понимает строго; `tests/openapi.py` разрешает там null, как задумано контрактом.
+- `backend/files` определяет формат по расширению пути — файл в хранилище лежит с расширением. Ошибки библиотек он оборачивает через `from e`: их текст пользователю не показываем (`uploads.file_error`).
