@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Классификатор КТРУ — экраны</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --canvas:#E7EAE6; --bg:#F4F6F3; --surface:#FFFFFF; --ink:#16201C; --muted:#5E6B66; --faint:#8A9590;
+  --line:#DDE3DF; --line2:#ECF0ED;
+  --primary:#0E6B5C; --primary-ink:#FFFFFF; --primary-soft:#DCEFE9; --primary-deep:#0A3F37;
+  --lime:#E4F7A8; --lime-ink:#3F5A00;
+  --hi:#0E7C66; --hi-bg:#DDF3EC; --mid:#B87700; --mid-bg:#FCF0D2; --lo:#C83E52; --lo-bg:#FBE3E7;
+  --nm:#5B4FC4; --nm-bg:#E9E6FB; --cor:#2563C9; --cor-bg:#E1EBFB; --ok:#16201C; --ok-bg:#E9ECEA;
+  --r:10px; --font:'Onest',system-ui,-apple-system,'Segoe UI',sans-serif; --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--canvas);font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.45;padding:40px 0}
+.board-title{width:1440px;margin:0 auto 28px;display:flex;justify-content:space-between;align-items:end}
+.board-title h1{font-size:28px;font-weight:700;letter-spacing:-.01em}
+.board-title p{color:var(--muted);max-width:640px}
+.wrap{width:1440px;margin:0 auto 56px}
+.wrap>.label{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;display:flex;gap:10px;align-items:center}
+.wrap>.label b{background:var(--ink);color:#fff;border-radius:6px;padding:1px 8px;font-size:12px}
+.frame{width:1440px;height:960px;background:var(--bg);position:relative;overflow:hidden;border-radius:14px;box-shadow:0 1px 0 rgba(0,0,0,.04),0 12px 40px rgba(22,32,28,.10)}
+/* top bar */
+.top{height:60px;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 32px;gap:36px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:-.01em}
+.logo svg{display:block}
+.nav{display:flex;gap:4px;height:100%}
+.nav a{display:flex;align-items:center;padding:0 14px;color:var(--muted);text-decoration:none;font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.nav a.on{color:var(--ink);border-bottom-color:var(--primary)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:16px;color:var(--muted);font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--muted);background:var(--surface)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--hi);display:inline-block}
+.ava{width:32px;height:32px;border-radius:50%;background:var(--primary-soft);color:var(--primary-deep);display:grid;place-items:center;font-weight:700;font-size:12px}
+.page{padding:28px 40px}
+.crumbs{font-size:13px;color:var(--faint);margin-bottom:6px}
+.crumbs a{color:var(--muted);text-decoration:none}
+h2{font-size:26px;font-weight:700;letter-spacing:-.015em}
+h3{font-size:16px;font-weight:600}
+.sub{color:var(--muted);margin-top:4px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 16px;border-radius:9px;border:1px solid var(--line);background:var(--surface);font:500 14px var(--font);color:var(--ink);white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.dark{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--primary)}
+.btn.sm{height:30px;padding:0 11px;font-size:13px;border-radius:8px}
+.btn.lg{height:46px;padding:0 22px;font-size:15px}
+.btn[disabled]{opacity:.45}
+.row{display:flex;gap:16px;align-items:center}
+.spacer{flex:1}
+.input{height:38px;border:1px solid var(--line);border-radius:9px;background:var(--surface);display:flex;align-items:center;padding:0 12px;gap:8px;color:var(--faint);font-size:14px}
+.input.val{color:var(--ink)}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+/* code chip */
+.code{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.code .ok2{color:var(--ink);font-weight:600}
+.code .pos{color:var(--faint)}
+.code.box{border:1px solid var(--line);background:#FAFBFA;border-radius:7px;padding:2px 7px}
+/* confidence */
+.conf{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-variant-numeric:tabular-nums}
+.conf i{display:inline-block;width:56px;height:6px;border-radius:3px;background:var(--line2);position:relative;overflow:hidden}
+.conf i::after{content:"";position:absolute;inset:0 auto 0 0;width:calc(var(--v)*1%);border-radius:3px;background:currentColor}
+.conf.high{color:var(--hi)} .conf.medium{color:var(--mid)} .conf.low{color:var(--lo)} .conf.nm{color:var(--nm)}
+/* status */
+.st{display:inline-flex;align-items:center;gap:6px;border-radius:7px;padding:3px 9px;font-size:12.5px;font-weight:600;white-space:nowrap}
+.st.auto{background:var(--hi-bg);color:var(--hi)}
+.st.review{background:var(--mid-bg);color:var(--mid)}
+.st.nomatch{background:var(--nm-bg);color:var(--nm)}
+.st.corrected{background:var(--cor-bg);color:var(--cor)}
+.st.confirmed{background:var(--ok-bg);color:var(--ok)}
+.st.error{background:var(--lo-bg);color:var(--lo)}
+.st svg{width:12px;height:12px}
+/* table */
+table{border-collapse:collapse;width:100%}
+th{font-size:12px;font-weight:600;color:var(--faint);text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.04em;background:#FAFBFA}
+td{padding:10px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr.sel td{background:#F2FAF7}
+tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--primary)}
+.num{color:var(--faint);font-variant-numeric:tabular-nums}
+.raw{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.attrs{font-size:12.5px;color:var(--muted);margin-top:2px}
+.attrs b{font-weight:600;color:var(--ink)}
+.kname{font-size:12.5px;color:var(--muted);margin-top:2px;max-width:330px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* counters */
+.counters{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.cnt{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px;display:flex;flex-direction:column;gap:2px;position:relative}
+.cnt .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.cnt .t{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.cnt .t .sw{width:9px;height:9px;border-radius:3px}
+.cnt.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.chipf{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:13px;font-weight:500;color:var(--muted)}
+.chipf.on{background:var(--lime);border-color:#C9E57A;color:var(--lime-ink)}
+/* drawer */
+.drawer{position:absolute;top:60px;right:0;bottom:0;width:580px;background:var(--surface);border-left:1px solid var(--line);box-shadow:-18px 0 40px rgba(22,32,28,.10);display:flex;flex-direction:column}
+.drawer .hd{padding:18px 24px 14px;border-bottom:1px solid var(--line)}
+.drawer .bd{padding:18px 24px;overflow:hidden;flex:1;display:flex;flex-direction:column;gap:16px}
+.drawer .ft{padding:14px 24px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;background:#FAFBFA}
+.sect-t{font-size:12px;font-weight:600;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.quote{background:#FAFBFA;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:13.5px}
+.kv dt{color:var(--muted)} .kv dd{font-weight:500}
+.cand{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:22px 1fr auto;gap:4px 12px;align-items:start}
+.cand.pick{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary);background:#F7FCFA}
+.cand .rk{width:22px;height:22px;border-radius:6px;background:var(--line2);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--muted)}
+.cand.pick .rk{background:var(--primary);color:#fff}
+.chars{grid-column:2/4;display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.cm{font-size:12px;border-radius:6px;padding:2px 7px;background:var(--line2);color:var(--muted)}
+.cm.y{background:var(--hi-bg);color:var(--hi)} .cm.n{background:var(--lo-bg);color:var(--lo)}
+.toast{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;border-radius:10px;padding:11px 16px;display:flex;gap:18px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.25);font-size:14px}
+.toast a{color:var(--lime);font-weight:600;text-decoration:none}
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--muted);background:#fff}
+.hint{font-size:12.5px;color:var(--faint)}
+.steps{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--faint)}
+.steps .s{display:flex;align-items:center;gap:8px}
+.steps .s i{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:700}
+.steps .s.on{color:var(--ink);font-weight:600}
+.steps .s.on i{background:var(--ink);border-color:var(--ink);color:#fff}
+.steps .s.done i{background:var(--primary-soft);border-color:var(--primary-soft);color:var(--primary)}
+.steps .ln{width:36px;height:1.5px;background:var(--line)}
+.ftype{width:34px;height:40px;border-radius:6px;display:grid;place-items:center;font:700 10px var(--mono);color:#fff;flex:none}
+.ftype.x{background:#1F7A4C} .ftype.p{background:#B5403A} .ftype.c{background:#4B6584} .ftype.d{background:#2B5797}
+.bar{height:8px;border-radius:4px;background:var(--line2);overflow:hidden;display:flex}
+.bar>span{display:block;height:100%}
+/* sheet preview */
+.sheet{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff;font-size:13px}
+.sheet table td,.sheet table th{border-right:1px solid var(--line2);padding:7px 10px;text-transform:none;letter-spacing:0}
+.sheet .colhead th{background:#F1F4F2;color:var(--faint);font:600 12px var(--mono);text-align:center;padding:4px}
+.sheet .roles th{background:#fff;padding:8px 8px;border-bottom:1px solid var(--line)}
+.role{white-space:nowrap;display:flex;align-items:center;justify-content:space-between;gap:6px;height:30px;border-radius:7px;padding:0 9px;font:600 12.5px var(--font);color:var(--ink);border:1px solid var(--line);background:#fff}
+.role.name{background:var(--lime);border-color:#C9E57A;color:var(--lime-ink)}
+.role.chars{background:var(--primary-soft);border-color:#BFE3D8;color:var(--primary-deep)}
+.role.qty,.role.unit{background:#EEF2F7;border-color:#D6DEE9;color:#33465C}
+.role.skip{color:var(--faint);border-style:dashed}
+.sheet td.rn{background:#F1F4F2;color:var(--faint);font:12px var(--mono);text-align:center;width:40px}
+.sheet tr.hdr td{font-weight:600;background:#FBFDF3}
+.sheet tr.skipr td{color:var(--faint);text-decoration:line-through;text-decoration-color:#C5CCC8}
+.c-name{background:#FBFEF0} .c-chars{background:#F6FBF9}
+.tag{font-size:11.5px;font-weight:600;border-radius:5px;padding:1px 6px;background:var(--line2);color:var(--muted)}
+/* login */
+.login{display:grid;grid-template-columns:720px 1fr;height:100%}
+.login .art{background:var(--primary-deep);color:#fff;padding:56px 64px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.login .art::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:36px 36px}
+.login .art>*{position:relative}
+.demo-row{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px 16px;display:grid;grid-template-columns:1fr 24px 250px;gap:14px;align-items:center;font-size:14px}
+.demo-row .code{color:#fff}.demo-row .code .ok2{color:#fff}.demo-row .code .pos{color:#9FC7BC}
+.demo-row .c{font:600 13px var(--font);color:var(--lime)}
+/* misc */
+.grid2{display:grid;grid-template-columns:1fr 380px;gap:24px}
+.stage{display:grid;grid-template-columns:28px 1fr auto;gap:4px 14px;align-items:center;padding:12px 0;border-bottom:1px dashed var(--line)}
+.stage:last-child{border-bottom:0}
+.stage .ic{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;border:1.5px solid var(--line);color:var(--faint)}
+.stage.done .ic{background:var(--primary-soft);border-color:var(--primary-soft);color:var(--primary)}
+.stage.now .ic{border-color:var(--primary);color:var(--primary)}
+.big{font-size:56px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1}
+.kpi{padding:18px 20px}
+.kpi .v{font-size:34px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kpi .goal{font-size:13px;color:var(--muted);display:flex;gap:8px;align-items:center;margin-top:4px}
+.pass{color:var(--hi);font-weight:600}
+.ico{width:16px;height:16px;flex:none}
+.mut{color:var(--muted)} .fa{color:var(--faint)}
+.small{font-size:12.5px}
+.swatch{display:flex;flex-direction:column;gap:6px}
+.swatch i{display:block;width:120px;height:44px;border-radius:9px;border:1px solid rgba(0,0,0,.06)}
+@media print{
+  body{background:#fff;padding:0}
+  .board-title{display:none}
+  .wrap{margin:0;page-break-after:always;break-after:page;padding:28px 40px 0}
+  .frame{box-shadow:none;border:1px solid var(--line)}
+  @page{size:1520px 1060px;margin:0}
+}
+body.only{padding:0;background:var(--bg)}
+body.only .board-title{display:none}
+body.only .wrap{margin:0;display:none}
+body.only .wrap.show{display:block}
+body.only .wrap>.label{display:none}
+body.only .frame{border-radius:0;box-shadow:none}
+</style>
+<style>
+.flag{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:#8A5A00;background:#FFF3D6;border-radius:5px;padding:1px 6px;white-space:nowrap}
+.grp{display:inline-flex;font-size:11.5px;font-weight:600;color:var(--primary-deep);background:var(--primary-soft);border-radius:5px;padding:1px 6px;margin-left:6px}
+.mode{background:#FFF8E6;border:1px solid #F1DFAE;color:#7A5400}
+.why{font-size:12.5px;color:var(--muted);margin-top:6px;grid-column:2/4}
+.why b{color:var(--ink);font-weight:600}
+.st.pending{background:#EEF1EF;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div class="board-title">
+  <div>
+    <h1>AI-классификатор КТРУ — экраны</h1>
+    <p>10 макетов по сценарию <code>docs/analytics/02-scenario.md</code> и контракту <code>contracts/openapi.yaml</code>. Целевая ширина 1440 px. Коды КТРУ и числа условные.</p>
+  </div>
+  <span class="pill"><span class="dot"></span>v2 · 25.10.2026</span>
+</div>
+
+<!-- ============ 1. UPLOAD ============ -->
+<div class="wrap" id="s1"><div class="label"><b>1</b>Новая загрузка — файл · POST /files</div>
+<div class="frame">
+  <div data-top="new"></div>
+  <div class="page">
+    <div class="row"><div><h2>Новая загрузка</h2><p class="sub">Один файл — одна задача. До 1000 позиций, до 50 МБ.</p></div><div class="spacer"></div>
+      <div class="steps"><span class="s on"><i>1</i>Файл</span><span class="ln"></span><span class="s"><i>2</i>Колонки</span><span class="ln"></span><span class="s"><i>3</i>Обработка и проверка</span></div></div>
+    <div class="grid2" style="margin-top:24px">
+      <div>
+        <div class="row" style="gap:6px;margin-bottom:12px"><span class="chipf on">Файл спецификации</span><span class="chipf">Быстрая проверка до 20 строк</span></div>
+        <div class="card" style="border:1.5px dashed #B9C5BF;background:#FBFCFB;height:250px;display:grid;place-items:center;text-align:center">
+          <div>
+            <div style="width:56px;height:56px;border-radius:14px;background:var(--primary-soft);display:grid;place-items:center;margin:0 auto" data-i="upload-big"></div>
+            <div style="font-size:18px;font-weight:600;margin-top:14px">Перетащите спецификацию сюда</div>
+            <div class="mut" style="margin-top:4px">или <span style="color:var(--primary);font-weight:600;text-decoration:underline">выберите на компьютере</span></div>
+            <div class="row" style="justify-content:center;gap:6px;margin-top:14px"><span class="tag">XLSX</span><span class="tag">CSV</span><span class="tag">PDF</span><span class="hint">· до 50 МБ · до 1000 позиций</span></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="row" style="padding:14px 16px"><span class="ftype x">XLSX</span><div><div style="font-weight:600">Спецификация_оргтехника.xlsx</div><div class="small mut">180 КБ · 2 листа · на листе «Спецификация» 412 строк</div></div><div class="spacer"></div><span class="st auto">Прочитан</span><span class="fa" data-i="x"></span></div>
+          <div class="row" style="padding:12px 16px;border-top:1px solid var(--line2);background:#F2FAF7;gap:12px"><span data-i="info2"></span><div class="small" style="flex:1"><b>Этот файл уже обрабатывался</b> 24.10.2026 в 17:15 — можно открыть готовый результат вместо новой обработки.</div><button class="btn sm">Открыть результат</button></div>
+        </div>
+        <div class="card" style="margin-top:12px;padding:12px 16px;display:flex;gap:10px;background:#FFF8F9;border-color:#F2CDD3"><span data-i="err"></span><span class="small" style="color:var(--lo)"><b>Смета_2025.docx</b> — формат не поддерживается. Сохраните таблицу в XLSX, CSV или PDF.</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;padding-top:44px">
+        <div class="card" style="padding:18px 20px">
+          <h3>Как это работает</h3>
+          <ol style="margin:10px 0 0 18px;color:var(--muted);display:flex;flex-direction:column;gap:6px">
+            <li>Проверьте, какая колонка — наименование, а какая — характеристики.</li>
+            <li>Система подберёт код КТРУ к каждой строке: 1000 позиций — до 4 минут. Вкладку можно закрыть.</li>
+            <li>Проверьте жёлтые и красные позиции, подтвердите остальные и выгрузите файл.</li>
+          </ol>
+          <button class="btn primary lg" style="width:100%;margin-top:22px">Далее: колонки →</button>
+        </div>
+        <div class="card" style="padding:14px 16px;display:flex;gap:10px" ><span data-i="info"></span><span class="small mut">Каталог КТРУ: версия от 20.10.2026. Задача работает с этой версией до конца, даже если каталог обновят.</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ 2. MAPPING ============ -->
+<div class="wrap" id="s2"><div class="label"><b>2</b>Новая загрузка — сопоставление колонок · POST /jobs</div>
+<div class="frame">
+  <div data-top="new"></div>
+  <div class="page">
+    <div class="row"><div><div class="crumbs"><a>Новая загрузка</a> / Спецификация_оргтехника.xlsx</div><h2>Проверьте колонки</h2><p class="sub">Роли предложены автоматически. Поменяйте, если что-то не так — главное, правильно выбрать наименование.</p></div><div class="spacer"></div>
+      <div class="steps"><span class="s done"><i>✓</i>Файл</span><span class="ln"></span><span class="s on"><i>2</i>Колонки</span><span class="ln"></span><span class="s"><i>3</i>Обработка и проверка</span></div></div>
+    <div class="row" style="margin-top:18px;gap:10px"><div class="card mode" style="padding:8px 12px;display:flex;gap:8px;align-items:center;border-radius:9px"><span data-i="info"></span><span class="small">Раскладка подставлена из прошлого файла с такими же заголовками</span></div><div class="spacer"></div><span class="mut small">Лист</span><div class="input val" style="height:32px;width:200px;justify-content:space-between">Спецификация <span data-i="chev"></span></div><span class="mut small">Строка заголовков</span><div class="input val" style="height:32px;width:70px;justify-content:space-between">3 <span data-i="chev"></span></div></div>
+    <div style="display:grid;grid-template-columns:1fr 330px;gap:20px;margin-top:14px">
+      <div class="sheet">
+        <table>
+          <tr class="colhead"><th></th><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr>
+          <tr class="roles"><th></th>
+            <th style="width:104px"><div class="role skip">Не брать <span data-i="chev"></span></div></th>
+            <th style="width:240px"><div class="role name">Наименование <span data-i="chev"></span></div></th>
+            <th><div class="role chars">Характеристики <span data-i="chev"></span></div></th>
+            <th style="width:104px"><div class="role unit">Ед. изм. <span data-i="chev"></span></div></th>
+            <th style="width:104px"><div class="role qty">Кол-во <span data-i="chev"></span></div></th>
+            <th style="width:110px"><div class="role skip">Не брать <span data-i="chev"></span></div></th></tr>
+          <tr class="skipr"><td class="rn">1</td><td colspan="6">Приложение № 1 к извещению о закупке</td></tr>
+          <tr class="skipr"><td class="rn">2</td><td colspan="6">Спецификация поставляемого товара</td></tr>
+          <tr class="hdr"><td class="rn">3</td><td>№ п/п</td><td class="c-name">Наименование товара</td><td class="c-chars">Технические характеристики</td><td>Ед. изм.</td><td>Кол-во</td><td>Цена за ед., руб.</td></tr>
+          <tbody data-sheet></tbody>
+          <tr><td class="rn">…</td><td colspan="6" class="fa">ещё 404 строки</td></tr>
+          <tr class="skipr"><td class="rn">416</td><td></td><td class="c-name">Итого</td><td class="c-chars"></td><td></td><td>1 284</td><td>4 918 330,00</td></tr>
+        </table>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="card" style="padding:18px">
+          <div class="mut small">Строк данных на листе</div>
+          <div class="big" style="font-size:44px;margin-top:4px">412</div>
+          <div class="small mut" style="margin-top:6px">Пустые строки и «Итого» система уберёт сама. Лимит — 1000 позиций в задаче.</div>
+        </div>
+        <div class="card" style="padding:14px 16px">
+          <div class="sect-t">Роли колонок</div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+            <div class="row" style="gap:10px"><div class="role name" style="width:140px">Наименование</div><span class="mut">ровно одна</span></div>
+            <div class="row" style="gap:10px"><div class="role chars" style="width:140px">Описание, Характ.</div><span class="mut">сколько угодно, склеиваются</span></div>
+            <div class="row" style="gap:10px"><div class="role qty" style="width:140px">Кол-во, Ед. изм.</div><span class="mut">не больше одной</span></div>
+            <div class="row" style="gap:10px"><div class="role skip" style="width:140px">Не брать</div><span class="mut">остальное</span></div>
+          </div>
+        </div>
+        <div class="card" style="padding:12px 14px">
+          <div class="row small"><span style="width:18px;height:18px;border-radius:5px;background:var(--primary);display:grid;place-items:center;color:#fff;font-size:12px">✓</span>Использовать подтверждённые ранее коды</div>
+          <div class="row small" style="margin-top:8px"><span style="width:18px;height:18px;border-radius:5px;background:var(--primary);display:grid;place-items:center;color:#fff;font-size:12px">✓</span>Использовать LLM, если доступна</div>
+        </div>
+        <div class="row" style="margin-top:auto"><button class="btn">← Назад</button><button class="btn primary lg" style="flex:1">Начать обработку</button></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ 3. PROCESSING ============ -->
+<div class="wrap" id="s3"><div class="label"><b>3</b>Задача — идёт обработка · GET /jobs/{id} (опрос 1,5 с)</div>
+<div class="frame">
+  <div data-top="jobs"></div>
+  <div class="page">
+    <div class="crumbs"><a>Задачи</a> / Спецификация_оргтехника.xlsx</div>
+    <div class="row"><h2>Подбираем коды КТРУ</h2><span class="pill mode"><span data-i="info"></span>Без LLM: работают правила и реранкер</span><div class="spacer"></div><button class="btn">Отменить обработку</button><button class="btn primary">Смотреть готовые · 288</button></div>
+    <p class="sub">Можно закрыть вкладку — обработка продолжится, задача останется в списке «Задачи».</p>
+    <div style="display:grid;grid-template-columns:420px 1fr;gap:20px;margin-top:22px">
+      <div class="card" style="padding:22px 24px">
+        <div class="mut small">Обработано позиций</div>
+        <div class="row" style="align-items:baseline;gap:10px;margin-top:6px"><span class="big">288</span><span style="font-size:22px;color:var(--faint);font-weight:600">из 412</span></div>
+        <div class="bar" style="margin-top:16px;height:10px"><span style="width:70%;background:var(--primary)"></span></div>
+        <div class="row small mut" style="margin-top:8px"><span>70%</span><div class="spacer"></div><span>осталось около 40 секунд</span></div>
+        <div style="margin-top:22px">
+          <div class="stage done"><span class="ic">✓</span><div><b>В очереди</b><div class="small mut">задача принята</div></div><span class="small fa">0,4 с</span></div>
+          <div class="stage done"><span class="ic">✓</span><div><b>Разбор файла</b><div class="small mut">412 позиций, 9 пачек по 50</div></div><span class="small fa">3 с</span></div>
+          <div class="stage now"><span class="ic">3</span><div><b>Подбор кодов</b><div class="small mut">пачка 6 из 9 · 2 ошибки, остальное идёт</div></div><span class="small" style="color:var(--primary);font-weight:600">идёт</span></div>
+          <div class="stage"><span class="ic">4</span><div><b>Готово</b><div class="small mut">или «Готово с ошибками»</div></div><span class="small fa">—</span></div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="counters" style="grid-template-columns:repeat(4,1fr)">
+          <div class="cnt"><span class="n" style="color:var(--hi)">201</span><span class="t"><span class="sw" style="background:var(--hi)"></span>Зелёные · от 85%</span></div>
+          <div class="cnt"><span class="n" style="color:var(--mid)">62</span><span class="t"><span class="sw" style="background:var(--mid)"></span>Жёлтые · 50–84%</span></div>
+          <div class="cnt"><span class="n" style="color:var(--lo)">23</span><span class="t"><span class="sw" style="background:var(--lo)"></span>Красные · ниже 50%</span></div>
+          <div class="cnt"><span class="n" style="color:var(--faint)">2</span><span class="t"><span class="sw" style="background:var(--faint)"></span>Ошибки</span></div>
+        </div>
+        <div class="card" style="flex:1;overflow:hidden">
+          <div class="row" style="padding:14px 16px;border-bottom:1px solid var(--line)"><h3>Только что обработано</h3><span class="pill"><span class="dot" style="background:var(--primary)"></span>обновляется само</span></div>
+          <table><tbody data-feed></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ 4. RESULTS ============ -->
+<div class="wrap" id="s4"><div class="label"><b>4</b>Результаты задачи · GET /jobs/{id}/items</div>
+<div class="frame" data-results="plain"></div></div>
+
+<!-- ============ 5. CARD ============ -->
+<div class="wrap" id="s5"><div class="label"><b>5</b>Карточка позиции — топ-3 и подтверждение · GET /items/{id}</div>
+<div class="frame" data-results="card">
+  <div class="drawer">
+    <div class="hd">
+      <div class="row" style="gap:10px"><span class="st review">Требует проверки</span><span class="mut small">Строка 52 · 30 шт</span><div class="spacer"></div><button class="btn sm">↑ <span class="kbd">K</span></button><button class="btn sm">↓ <span class="kbd">J</span></button><button class="btn sm" style="width:30px;padding:0">✕</button></div>
+      <div style="font-size:18px;font-weight:600;margin-top:10px;line-height:1.3">Картридж лазерный черный, совместим с HP LaserJet Pro M404, ресурс не менее 3000 стр.</div>
+      <div class="small" style="margin-top:6px"><span class="flag">⚠ нет обязательной характеристики КТРУ</span> <a class="grp" style="text-decoration:none">+2 таких же в файле</a></div>
+    </div>
+    <div class="bd">
+      <div>
+        <div class="sect-t">Извлечённые атрибуты <span class="spacer"></span><span style="text-transform:none;letter-spacing:0;font-weight:500">правила · уверенность высокая</span></div>
+        <dl class="kv">
+          <dt>Наименование</dt><dd>Картридж лазерный</dd>
+          <dt>Бренд / модель</dt><dd class="fa">не найдены</dd>
+          <dt>Характеристики</dt><dd>Цвет: черный · Ресурс: ≥ 3000 стр. · Совместимость: HP LaserJet Pro M404</dd>
+        </dl>
+      </div>
+      <div>
+        <div class="sect-t">Варианты КТРУ <span class="spacer"></span><span style="text-transform:none;letter-spacing:0;font-weight:500">уверенность</span></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="cand pick"><span class="rk">1</span><div><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000002</span></span><div style="font-weight:500;margin-top:2px">Картридж для электрографических печатающих устройств</div></div><span class="conf medium" style="--v:71">71%<i></i></span>
+            <div class="chars"><span class="cm y">✓ Цвет: черный</span><span class="cm y">✓ Ресурс: от 2000 до 5000</span><span class="cm n">✗ Тип оригинальности: не указан · обязательна</span></div>
+            <div class="why"><b>Пояснение:</b> совпадают цвет и ресурс; в тексте нет признака «оригинальный / совместимый», а он обязателен для этого кода.</div></div>
+          <div class="cand"><span class="rk">2</span><div><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000005</span></span><div style="font-weight:500;margin-top:2px">Картридж … совместимый (неоригинальный)</div></div><span class="conf low" style="--v:22">22%<i></i></span>
+            <div class="why"><b>Почему не первый:</b> слово «совместим» относится к принтеру и не говорит о неоригинальности картриджа.</div></div>
+          <div class="cand"><span class="rk">3</span><div><span class="code"><span class="ok2">28.23.25.000</span><span class="pos">-00000014</span></span><div style="font-weight:500;margin-top:2px">Блок фотобарабана для лазерного принтера</div></div><span class="conf low" style="--v:3">3%<i></i></span>
+            <div class="why"><b>Почему не первый:</b> позиция описывает картридж, а не фотобарабан.</div></div>
+        </div>
+      </div>
+      <div class="small"><a style="color:var(--primary);font-weight:600">Найти другой код в каталоге</a> <span class="fa">·</span> <span class="mut">путь: реранкер</span></div>
+    </div>
+    <div class="ft"><button class="btn primary" style="flex:1">Подтвердить вариант 1 <span class="kbd" style="background:transparent;color:#cfe;border-color:#5a9">Enter</span></button><button class="btn">Выбрать вариант 2</button></div>
+  </div>
+</div></div>
+
+<!-- ============ 6. MANUAL SEARCH ============ -->
+<div class="wrap" id="s6"><div class="label"><b>6</b>Ручная правка — поиск кода в каталоге · GET /catalog/search → PUT /items/{id}/decision</div>
+<div class="frame" data-results="card">
+  <div class="drawer">
+    <div class="hd">
+      <div class="row" style="gap:10px"><button class="btn sm">← К вариантам</button><span class="mut small">Строка 52</span><div class="spacer"></div><button class="btn sm" style="width:30px;padding:0">✕</button></div>
+      <div style="font-size:16px;font-weight:600;margin-top:10px">Картридж лазерный черный, совместим с HP LaserJet Pro M404…</div>
+    </div>
+    <div class="bd">
+      <div class="input val" style="height:44px;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)"><span data-i="search"></span>20.59.12 картридж монохромный<span style="margin-left:auto" class="hint">начало кода или слова</span></div>
+      <div class="hint" style="margin-top:-8px">Ищем в версии каталога этой задачи (от 20.10.2026) — бэкенд примет только эти коды.</div>
+      <div class="card" style="overflow:hidden">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--line2)"><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000002</span></span><div class="small" style="margin-top:2px">Картридж для электрографических печатающих устройств</div></div>
+        <div style="padding:12px 14px;border-bottom:1px solid var(--line2);background:#F2FAF7;box-shadow:inset 3px 0 0 var(--primary)"><div class="row"><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000007</span></span><span class="tag" style="background:var(--primary-soft);color:var(--primary-deep)">выбран</span></div><div class="small" style="margin-top:2px">Картридж для электрографических печатающих устройств, оригинальный</div>
+          <div style="margin-top:10px;font-size:12.5px"><div class="sect-t" style="margin-bottom:6px">Характеристики · GET /catalog/items/{code}</div>
+            <dl class="kv" style="grid-template-columns:170px 1fr;font-size:12.5px"><dt>Цвет красителя *</dt><dd>Черный</dd><dt>Ресурс, стр. *</dt><dd>≥ 1000 и &lt; 5000</dd><dt>Тип оригинальности *</dt><dd>Оригинальный</dd><dt>Ед. измерения</dt><dd>Штука</dd></dl></div></div>
+        <div style="padding:12px 14px;border-bottom:1px solid var(--line2)"><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000005</span></span><div class="small" style="margin-top:2px">Картридж … совместимый (неоригинальный)</div></div>
+        <div style="padding:12px 14px"><span class="code"><span class="ok2">20.59.12.120</span><span class="pos">-00000009</span></span><div class="small" style="margin-top:2px">Тонер-картридж для лазерного МФУ</div></div>
+      </div>
+      <div class="field"><label>Почему исправлено (необязательно)</label><div class="input val">В ТЗ указан оригинальный картридж HP 59A</div></div>
+    </div>
+    <div class="ft"><button class="btn primary" style="flex:1">Сохранить код 20.59.12.120-00000007</button></div>
+  </div>
+  <div class="toast" style="left:430px">Строка 51 подтверждена <a>Отменить</a></div>
+</div></div>
+
+<!-- ============ 7. JOBS ============ -->
+<div class="wrap" id="s7"><div class="label"><b>7</b>Список задач · GET /jobs</div>
+<div class="frame">
+  <div data-top="jobs"></div>
+  <div class="page">
+    <div class="row"><div><h2>Задачи</h2><p class="sub">Все загруженные спецификации. Новые сверху.</p></div><div class="spacer"></div><button class="btn primary lg">+ Новая загрузка</button></div>
+    <div class="row" style="margin-top:20px;gap:8px"><div class="input" style="width:340px"><span data-i="search"></span>Имя файла</div><span class="chipf on">Все</span><span class="chipf">Идут · 1</span><span class="chipf">Готово</span><span class="chipf">С ошибками</span></div>
+    <div class="card" style="margin-top:16px;overflow:hidden">
+      <table>
+        <thead><tr><th>Файл</th><th style="width:140px">Создана</th><th style="width:100px">Позиций</th><th style="width:330px">Уверенность</th><th style="width:200px">Статус</th><th style="width:160px">Проверено</th><th style="width:40px"></th></tr></thead>
+        <tbody data-jobs></tbody>
+      </table>
+    </div>
+    <div class="row small mut" style="margin-top:14px"><span>Показано 8 из 23</span><div class="spacer"></div><button class="btn sm">←</button><span>1 / 3</span><button class="btn sm">→</button></div>
+  </div>
+</div></div>
+
+<!-- ============ 8. QUALITY ============ -->
+<div class="wrap" id="s8"><div class="label"><b>8</b>Качество · POST /quality/run, GET /quality/latest, GET /stats</div>
+<div class="frame">
+  <div data-top="quality"></div>
+  <div class="page">
+    <div class="row"><div><h2>Качество</h2><p class="sub">Прогон от 25.10.2026 14:20 · набор <b>test</b>, 90 позиций · атрибуты — набор attrs, 50 позиций · подтверждённые примеры выключены</p></div><div class="spacer"></div><div class="row" style="gap:0;border:1px solid var(--line);border-radius:9px;overflow:hidden"><span style="padding:8px 14px" class="small">dev</span><span style="padding:8px 14px;background:var(--ink);color:#fff" class="small">test</span></div><button class="btn primary">Запустить оценку</button></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:20px">
+      <div class="card kpi"><div class="mut small">Атрибуты: наименование, бренд, модель</div><div class="v">93,4%</div><div class="goal">критерий ≥ 90% <span class="pass">✓</span></div></div>
+      <div class="card kpi"><div class="mut small">Top-1, полный код КТРУ</div><div class="v">87,8%</div><div class="goal">критерий ≥ 85% <span class="pass">✓</span></div></div>
+      <div class="card kpi"><div class="mut small">Top-3 · Top-1 по ОКПД2</div><div class="v">95,6% <span style="font-size:20px;color:var(--muted)">· 93,3%</span></div><div class="goal">цели ≥ 95% и ≥ 92% <span class="pass">✓</span></div></div>
+      <div class="card kpi"><div class="mut small">Секунд на 1000 позиций</div><div class="v">198</div><div class="goal">критерий &lt; 300, цель ≤ 240 <span class="pass">✓</span></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:420px 1fr;gap:20px;margin-top:20px">
+      <div class="card" style="padding:18px 20px">
+        <h3>Честность уверенности</h3>
+        <p class="small mut" style="margin-top:2px">Доля верных кодов в каждом диапазоне уверенности. Идеал — по диагонали. ECE = 0,041 (цель ≤ 0,05).</p>
+        <svg viewBox="0 0 380 230" width="380" height="230" style="margin-top:14px" data-calib></svg>
+        <div class="kv" style="grid-template-columns:1fr auto;margin-top:10px;font-size:13px"><dt>Доля быстрого пути</dt><dd>83% <span class="pass">✓</span></dd><dt>Исправлено среди зелёных, проверенных вручную</dt><dd>3,1%</dd><dt>Ошибок обработки</dt><dd>0,4%</dd></div>
+      </div>
+      <div class="card" style="overflow:hidden">
+        <div class="row" style="padding:14px 16px;border-bottom:1px solid var(--line)"><h3>Ошибки на наборе test · 11</h3><div class="spacer"></div><span class="chipf on">Все</span><span class="chipf">Соседний код</span><span class="chipf">Другой ОКПД2</span></div>
+        <table><thead><tr><th>Позиция</th><th style="width:200px">Эталон</th><th style="width:200px">Ответ rank 1</th><th style="width:100px">Увер.</th></tr></thead><tbody data-errors></tbody></table>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ 9. CATALOG ============ -->
+<div class="wrap" id="s9"><div class="label"><b>9</b>Каталог КТРУ (если успеем) · GET /catalog/versions, POST /catalog/import</div>
+<div class="frame">
+  <div data-top="catalog"></div>
+  <div class="page">
+    <div class="row"><div><h2>Каталог КТРУ</h2><p class="sub">Новая версия загружается без перезапуска системы. Идущие задачи доработают на своей версии.</p></div></div>
+    <div style="display:grid;grid-template-columns:420px 1fr;gap:20px;margin-top:20px">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="card" style="padding:18px 20px">
+          <div class="row"><span class="st auto">ready</span><div class="spacer"></div><span class="hint">загружена 20.10.2026 08:00</span></div>
+          <div style="font-size:28px;font-weight:700;margin-top:10px;letter-spacing:-.02em">48 213 <span style="font-size:15px;font-weight:500;color:var(--muted)">позиций</span></div>
+          <div class="kv" style="grid-template-columns:1fr auto;margin-top:10px;font-size:13px"><dt>Источник</dt><dd>ЕИС, снимок 20.10.2026</dd><dt>Архивных кодов</dt><dd>1 343</dd><dt>Модель эмбеддингов</dt><dd class="code">EMBEDDER_MODEL</dd></div>
+        </div>
+        <div class="card" style="padding:18px 20px">
+          <h3>Загрузить новую версию</h3>
+          <div style="border:1.5px dashed #B9C5BF;border-radius:10px;padding:14px;margin-top:12px;text-align:center;background:#FBFCFB" class="small mut">Перетащите JSONL (строка — схема CatalogRow)</div>
+          <div class="field" style="margin-top:12px"><label>Комментарий</label><div class="input val">Снимок ЕИС от 25.10.2026</div></div>
+          <div style="margin-top:14px">
+            <div class="row small"><b>ktru_2026-10-25.jsonl</b><div class="spacer"></div><span class="st review">importing</span></div>
+            <div class="bar" style="margin-top:8px"><span style="width:61%;background:var(--primary)"></span></div>
+            <div class="small mut" style="margin-top:6px">Строки загружены, ML строит эмбеддинги. Версия станет активной после статуса ready.</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="overflow:hidden;display:grid;grid-template-columns:1fr 1fr">
+        <div style="border-right:1px solid var(--line)">
+          <div style="padding:14px"><div class="input val"><span data-i="search"></span>бумага а4</div></div>
+          <div data-catalog></div>
+        </div>
+        <div style="padding:18px 20px">
+          <span class="code box"><span class="ok2">17.12.14.129</span><span class="pos">-00000001</span></span>
+          <div style="font-size:18px;font-weight:600;margin-top:10px">Бумага для печати</div>
+          <div class="small mut" style="margin-top:2px">ОКПД2 17.12.14.129 · ед. изм.: пачка</div>
+          <div class="sect-t" style="margin-top:20px">Характеристики</div>
+          <table class="small"><thead><tr><th>Характеристика</th><th>Значения</th><th>Обяз.</th></tr></thead><tbody>
+            <tr><td>Формат</td><td>A3; A4; A5</td><td>да</td></tr>
+            <tr><td>Плотность, г/м²</td><td>≥ 60 и ≤ 120</td><td>да</td></tr>
+            <tr><td>Количество листов в пачке</td><td>≥ 250 и ≤ 500</td><td>да</td></tr>
+            <tr><td>Белизна по CIE, %</td><td>≥ 135</td><td>нет</td></tr>
+            <tr><td>Класс</td><td>A; B; C</td><td>нет</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ============ 10. COMPONENTS ============ -->
+<div class="wrap" id="s10"><div class="label"><b>10</b>Компоненты и токены</div>
+<div class="frame" style="padding:40px 48px;overflow:hidden">
+  <h2>Компоненты</h2>
+  <p class="sub">Цвет никогда не единственный носитель смысла: у статуса есть подпись, у уверенности — число. Пороги зон приходят из <code>/config</code>.</p>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:28px">
+    <div class="card" style="padding:20px">
+      <div class="sect-t">Статусы позиции (ItemStatus)</div>
+      <div class="row" style="flex-wrap:wrap;gap:10px"><span class="st pending">В очереди</span><span class="st auto">Обработана</span><span class="st review">Требует проверки</span><span class="st confirmed">✓ Подтверждена</span><span class="st corrected">Исправлена</span><span class="st error">Ошибка</span></div>
+      <div class="sect-t" style="margin-top:22px">Зона уверенности (band)</div>
+      <div class="row" style="gap:28px"><span class="conf high" style="--v:94">94%<i></i></span><span class="conf medium" style="--v:71">71%<i></i></span><span class="conf low" style="--v:38">38%<i></i></span></div>
+      <div class="small mut" style="margin-top:8px">green ≥ 85% · yellow 50–84% · red &lt; 50%. Подсказка: «Из 10 позиций с такой уверенностью верны примерно 9».</div>
+      <div class="sect-t" style="margin-top:22px">Флаги и группы</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><span class="flag">⚠ нет обязательной характеристики КТРУ</span><span class="flag">⚠ код в архиве каталога</span><span class="flag">⚠ атрибуты извлечены неуверенно</span><span class="grp" style="margin:0">+2 таких же</span></div>
+    </div>
+    <div class="card" style="padding:20px">
+      <div class="sect-t">Кнопки</div>
+      <div class="row" style="flex-wrap:wrap;gap:10px"><button class="btn primary">Подтвердить</button><button class="btn dark">Выгрузить</button><button class="btn">Отменить обработку</button><button class="btn ghost">Найти другой код</button><button class="btn primary" disabled>Начать обработку</button></div>
+      <div class="sect-t" style="margin-top:22px">Код КТРУ</div>
+      <div class="row" style="gap:16px"><span class="code"><span class="ok2">26.20.11.110</span><span class="pos">-00000001</span></span><span class="small mut">ОКПД2 — жирный, суффикс — светлее: соседние коды отличаются только хвостом</span></div>
+      <div class="sect-t" style="margin-top:22px">Режим и готовность</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><span class="pill mode"><span data-i="info"></span>Без LLM: работают правила и реранкер</span><span class="pill"><span class="dot" style="background:var(--mid)"></span>Система готовится: загружаются модели</span></div>
+    </div>
+    <div class="card" style="padding:20px">
+      <div class="sect-t">Вариант КТРУ</div>
+      <div class="cand pick"><span class="rk">1</span><div><span class="code"><span class="ok2">17.12.14.129</span><span class="pos">-00000001</span></span><div style="font-weight:500;margin-top:2px">Бумага для печати</div></div><span class="conf high" style="--v:91">91%<i></i></span><div class="chars"><span class="cm y">✓ Формат: A4</span><span class="cm y">✓ Плотность: 80</span><span class="cm">— Класс: не указан</span></div></div>
+      <div class="sect-t" style="margin-top:22px">Тост</div>
+      <div style="position:relative;height:50px"><div class="toast" style="position:static;transform:none;display:inline-flex">Подтверждено 201 позиция <a>Отменить</a></div></div>
+    </div>
+    <div class="card" style="padding:20px">
+      <div class="sect-t">Палитра</div>
+      <div class="row" style="gap:14px;flex-wrap:wrap">
+        <div class="swatch"><i style="background:var(--primary)"></i><span class="small">Основной<br><span class="code fa">#0E6B5C</span></span></div>
+        <div class="swatch"><i style="background:var(--lime)"></i><span class="small">Акцент выбора<br><span class="code fa">#E4F7A8</span></span></div>
+        <div class="swatch"><i style="background:var(--ink)"></i><span class="small">Текст<br><span class="code fa">#16201C</span></span></div>
+        <div class="swatch"><i style="background:var(--bg)"></i><span class="small">Фон<br><span class="code fa">#F4F6F3</span></span></div>
+      </div>
+      <div class="small mut" style="margin-top:14px">Шрифты: Onest (интерфейс), JetBrains Mono (коды, числа). Скругление 10 px. В Mantine — через <code>createTheme</code>: primaryColor, fontFamily, radius.</div>
+    </div>
+  </div>
+</div></div>
+
+<script>
+const I = {
+  search:'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#8A9590" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  chev:'<svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>',
+  x:'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#8A9590" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  info:'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#9A6A00" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+  info2:'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#0E6B5C" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+  err:'<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="#C83E52" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+  'upload-big':'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0E6B5C" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/></svg>',
+  dots:'<svg class="ico" viewBox="0 0 24 24" fill="#8A9590"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>'
+};
+const logo = ()=>`<svg width="26" height="26" viewBox="0 0 26 26"><rect x="1" y="1" width="11" height="11" rx="3" fill="#0E6B5C"/><rect x="14" y="1" width="11" height="11" rx="3" fill="none" stroke="#B9C5BF" stroke-width="1.6"/><rect x="1" y="14" width="11" height="11" rx="3" fill="none" stroke="#B9C5BF" stroke-width="1.6"/><rect x="14" y="14" width="11" height="11" rx="3" fill="none" stroke="#B9C5BF" stroke-width="1.6"/></svg>`;
+function topbar(active){
+  const items=[['jobs','Задачи'],['new','Новая загрузка'],['quality','Качество'],['catalog','Каталог']];
+  return `<div class="top"><div class="logo">${logo()}Классификатор КТРУ</div><nav class="nav">${items.map(([k,t])=>`<a class="${k===active?'on':''}">${t}</a>`).join('')}</nav>
+  <div class="right"><span class="pill"><span class="dot"></span>Каталог от 20.10.2026 · 48 213 кодов</span><span class="pill">CPU · реранкер · LLM выкл.</span></div></div>`;
+}
+document.querySelectorAll('[data-top]').forEach(e=>{e.outerHTML=topbar(e.dataset.top);});
+
+const code=(c)=>{ if(!c) return '<span class="fa">—</span>'; const [a,b]=c.split('-'); return `<span class="code"><span class="ok2">${a}</span><span class="pos">-${b}</span></span>`; };
+const lvl=v=>v>=85?'high':v>=50?'medium':'low';
+const ST={processed:['auto','Обработана'],needs_review:['review','Требует проверки'],confirmed:['confirmed','✓ Подтверждена'],corrected:['corrected','Исправлена'],failed:['error','Ошибка'],pending:['pending','В очереди']};
+const FL={required_missing:'⚠ нет обяз. характеристики',low_extraction_confidence:'⚠ атрибуты неуверенно'};
+
+// row, raw, name, brand, model, qty, code, ktru name, conf, status, flag, group
+const ITEMS=[
+ [44,'Ноутбук Lenovo IdeaPad 3 15IAU7, 15.6", Core i5-1235U, 16 ГБ, SSD 512 ГБ','Ноутбук','Lenovo','IdeaPad 3 15IAU7','12 шт','26.20.11.110-00000001','Компьютер портативный (ноутбук)',94,'confirmed'],
+ [45,'Монитор 27" IPS 2560×1440, HDMI, DisplayPort, AOC Q27P2Q','Монитор','AOC','Q27P2Q','12 шт','26.20.17.110-00000003','Монитор, подключаемый к компьютеру',92,'processed'],
+ [46,'Бумага офисная А4, 80 г/м², 500 л., белизна не менее 146% CIE','Бумага офисная','—','—','400 пач','17.12.14.129-00000001','Бумага для печати',91,'processed',null,4],
+ [47,'МФУ лазерное монохромное А4, Pantum M6700DW, дуплекс, Wi-Fi','МФУ лазерное','Pantum','M6700DW','4 шт','26.20.18.000-00000068','Многофункциональное устройство (МФУ)',88,'processed'],
+ [48,'Мышь компьютерная беспроводная, оптическая, 1600 dpi','Мышь компьютерная','—','—','25 шт','26.20.16.170-00000002','Мышь компьютерная',83,'needs_review'],
+ [49,'Флеш-накопитель USB 3.2, 64 ГБ, Kingston DataTraveler Exodia','Флеш-накопитель','Kingston','DataTraveler Exodia','40 шт','26.20.21.110-00000006','Накопитель на флеш-памяти',92,'confirmed'],
+ [52,'Картридж лазерный черный, совместим с HP LaserJet Pro M404, ресурс не менее 3000 стр.','Картридж лазерный','—','—','30 шт','20.59.12.120-00000002','Картридж для электрографических печатающих устройств',71,'needs_review','required_missing',3],
+ [55,'Кресло офисное, газлифт, подлокотники, спинка сетка','Кресло офисное','—','—','10 шт','31.01.11.150-00000004','Кресло офисное',66,'needs_review'],
+ [56,'Подставка под ноутбук алюминиевая, регулируемая','Подставка под ноутбук','—','—','12 шт','25.99.29.190-00000011','Изделие металлическое прочее',31,'needs_review','low_extraction_confidence'],
+ [57,'Ручка шариковая синяя 0,7 мм, BIC Cristal','Ручка шариковая','BIC','Cristal','500 шт','32.99.12.110-00000001','Ручка шариковая',97,'processed'],
+ [58,'ИБП 1000 ВА линейно-интерактивный, 4 розетки','ИБП','—','—','6 шт','27.90.11.000-00000002','Источник бесперебойного питания',54,'needs_review'],
+ [59,'Степлер №24/6, до 20 листов, металлический корпус','Степлер','—','—','15 шт','25.99.23.000-00000003','Степлер канцелярский',null,'corrected'],
+ [60,'Папка-регистратор А4, 75 мм, ПВХ, с металлической окантовкой','Папка-регистратор','—','—','120 шт','22.29.25.000-00000004','Папка-регистратор',90,'processed'],
+];
+function resultsFrame(withCard){
+  const rows=ITEMS.map(r=>{const [n,raw,nm,br,md,q,c,kn,v,s,fl,g]=r; const sel=withCard&&n===52;
+    const conf = v==null?`<span class="small mut">вручную</span>`:`<span class="conf ${lvl(v)}" style="--v:${v}">${v}%<i></i></span>`;
+    const [cls,lab]=ST[s];
+    return `<tr class="${sel?'sel':''}"><td class="num">${n}</td><td><div class="raw">${raw}</div><div class="attrs"><b>${nm}</b>${br!=='—'?` · ${br}`:''}${md!=='—'?` · ${md}`:''}${g?`<span class="grp">+${g-1} таких же</span>`:''}</div></td><td class="num" style="color:var(--muted)">${q}</td><td>${code(c)}<div class="kname">${kn}</div></td><td>${conf}</td><td><span class="st ${cls}">${lab}</span>${fl?`<div style="margin-top:4px"><span class="flag">${FL[fl]}</span></div>`:''}</td><td>${I.dots}</td></tr>`}).join('');
+  return `${topbar('jobs')}<div class="page" style="padding-top:22px">
+   <div class="crumbs"><a>Задачи</a> / Спецификация_оргтехника.xlsx</div>
+   <div class="row"><h2>Спецификация_оргтехника.xlsx</h2><span class="st auto">Готово</span><span class="pill">412 позиций · проверено 41</span><div class="spacer"></div>${withCard?'':'<button class="btn">Подтвердить все от 85% · 196</button><button class="btn dark">Выгрузить · как исходный xlsx ▾</button>'}</div>
+   <div class="counters" style="margin-top:16px;${withCard?'width:780px;':''}">
+     <div class="cnt"><span class="n">412</span><span class="t">Всего позиций</span></div>
+     <div class="cnt"><span class="n" style="color:var(--hi)">255</span><span class="t"><span class="sw" style="background:var(--hi)"></span>Зелёные</span></div>
+     <div class="cnt"><span class="n" style="color:var(--mid)">117</span><span class="t"><span class="sw" style="background:var(--mid)"></span>Жёлтые</span></div>
+     <div class="cnt"><span class="n" style="color:var(--lo)">38</span><span class="t"><span class="sw" style="background:var(--lo)"></span>Красные</span></div>
+     <div class="cnt"><span class="n" style="color:var(--cor)">41</span><span class="t"><span class="sw" style="background:var(--cor)"></span>Проверено</span></div>
+   </div>
+   <div class="row" style="margin-top:14px;gap:8px"><div class="input" style="width:${withCard?260:340}px"><span data-i2="search"></span>Поиск по исходному тексту</div><span class="chipf">Сначала спорные</span><span class="chipf">С предупреждениями · 14</span>${withCard?'':'<span class="chipf">Ошибки · 2</span><div class="spacer"></div><span class="hint"><span class="kbd">J</span> <span class="kbd">K</span> — по строкам, <span class="kbd">Enter</span> — подтвердить</span>'}</div>
+   <div class="card" style="margin-top:12px;overflow:hidden"><table><thead><tr><th style="width:56px">Стр.</th><th>Позиция и извлечённые атрибуты</th><th style="width:90px">Кол-во</th><th style="width:330px">Код КТРУ (rank 1 или решение)</th><th style="width:120px">Уверенность</th><th style="width:200px">Статус</th><th style="width:40px"></th></tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
+}
+document.querySelectorAll('[data-results]').forEach(f=>{const card=f.dataset.results==='card'; const inner=f.innerHTML; f.innerHTML=resultsFrame(card)+inner;});
+document.querySelectorAll('[data-i]').forEach(e=>e.innerHTML=I[e.dataset.i]||'');
+document.querySelectorAll('[data-i2]').forEach(e=>e.innerHTML=I[e.dataset.i2]);
+
+const SHEET=[['1','Ноутбук Lenovo IdeaPad 3 15IAU7','15.6", Core i5-1235U, ОЗУ 16 ГБ, SSD 512 ГБ, Windows 11 Pro','шт','12','68 900,00'],
+ ['2','Монитор AOC Q27P2Q','27", IPS, 2560×1440, HDMI, DP, регулировка по высоте','шт','12','24 500,00'],
+ ['3','Бумага офисная А4','80 г/м², 500 л. в пачке, белизна ≥ 146% CIE, класс C','пач','400','389,00'],
+ ['4','МФУ Pantum M6700DW','лазерное, моно, А4, дуплекс, Wi-Fi, 30 стр/мин','шт','4','21 990,00'],
+ ['5','Мышь компьютерная','беспроводная, оптическая, 1600 dpi, USB-приёмник','шт','25','790,00'],
+ ['6','Картридж лазерный','черный, совместим с HP LaserJet Pro M404, ресурс ≥ 3000 стр.','шт','30','2 150,00'],
+ ['7','Кресло офисное','газлифт, подлокотники, спинка сетка, нагрузка до 120 кг','шт','10','9 400,00'],
+ ['8','Ручка шариковая BIC Cristal','синяя, 0,7 мм','шт','500','24,00']];
+document.querySelector('[data-sheet]').innerHTML=SHEET.map((r,i)=>`<tr><td class="rn">${i+4}</td><td>${r[0]}</td><td class="c-name">${r[1]}</td><td class="c-chars">${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td class="fa">${r[5]}</td></tr>`).join('');
+
+const FEED=[[291,'Блок питания для ноутбука 65 Вт, USB-C','27.11.50.000-00000003',81],[290,'Кабель HDMI 2.0, 3 м','27.32.13.190-00000004',89],[289,'Батарейка АА щелочная, 1,5 В','27.20.11.000-00000002',95],[288,'Папка-регистратор А4, 75 мм, ПВХ','22.29.25.000-00000004',90],[287,'Скобы для степлера №24/6, 1000 шт','25.93.14.150-00000001',82],[286,'ИБП 1000 ВА линейно-интерактивный','27.90.11.000-00000002',54],[285,'Ручка шариковая синяя 0,7 мм, BIC Cristal','32.99.12.110-00000001',97],[284,'Подставка под ноутбук алюминиевая','25.99.29.190-00000011',31],[283,'Кресло офисное, газлифт, спинка сетка','31.01.11.150-00000004',66],[282,'Картридж лазерный черный, совместим с HP…','20.59.12.120-00000002',71],[281,'Флеш-накопитель USB 3.2, 64 ГБ, Kingston','26.20.21.110-00000006',92],[280,'Мышь компьютерная беспроводная, 1600 dpi','26.20.16.170-00000002',83],[279,'МФУ лазерное монохромное А4, Pantum M6700DW','26.20.18.000-00000068',88]];
+document.querySelector('[data-feed]').innerHTML=FEED.map(([n,t,c,v],i)=>`<tr style="opacity:${Math.max(.35,1-i*0.06)}"><td class="num" style="width:56px">${n}</td><td>${t}</td><td style="width:220px">${code(c)}</td><td style="width:120px"><span class="conf ${lvl(v)}" style="--v:${v}">${v}%<i></i></span></td></tr>`).join('');
+
+const J=[['Спецификация_оргтехника.xlsx','25.10.2026 14:02',412,[255,117,38],'done','41'],
+ ['Расходные_материалы_ноябрь.csv','25.10.2026 13:40',1000,null,'processing','—'],
+ ['kanc_shkoly.xlsx','24.10.2026 17:15',312,[264,40,8],'done','312'],
+ ['ТЗ_серверы.pdf','24.10.2026 11:02',27,[12,9,4],'done_with_errors','6'],
+ ['Прил_2_спецификация.xlsx','23.10.2026 09:48',688,[402,201,85],'done','166'],
+ ['мебель_зал.xlsx','22.10.2026 15:30',54,[30,20,4],'cancelled','0'],
+ ['хозтовары.csv','21.10.2026 10:05',203,[150,45,8],'done','16'],
+ ['Смета_сканы.pdf','21.10.2026 09:12',0,null,'failed','—']];
+const JS={done:['auto','Готово'],processing:['review','Обработка · 64%'],done_with_errors:['review','Готово с ошибками · 2'],cancelled:['confirmed','Отменена'],failed:['error','Ошибка: файл не читается']};
+document.querySelector('[data-jobs]').innerHTML=J.map(([f,d,p,c,s,rv])=>{
+  let res;
+  if(s==='processing') res=`<div class="bar" style="width:250px"><span style="width:64%;background:var(--primary)"></span></div><div class="small mut" style="margin-top:5px">640 из 1000 · осталось ~1 мин</div>`;
+  else if(!c) res='<span class="fa">—</span>';
+  else {const t=c.reduce((a,b)=>a+b,0); res=`<div class="bar" style="width:250px"><span style="width:${c[0]/t*100}%;background:var(--hi)"></span><span style="width:${c[1]/t*100}%;background:var(--mid)"></span><span style="width:${c[2]/t*100}%;background:var(--lo)"></span></div><div class="small mut" style="margin-top:5px">${c[0]} зелёных · ${c[1]} жёлтых · ${c[2]} красных</div>`;}
+  const rev = rv==='—'?'<span class="fa">—</span>': (Number(rv)===p?'<span class="pass small">✓ всё проверено</span>':`<span class="small">${rv} из ${p}</span>`);
+  return `<tr><td><div style="font-weight:600">${f}</div></td><td class="small mut">${d}</td><td class="num" style="color:var(--ink);font-weight:600">${p||'—'}</td><td>${res}</td><td><span class="st ${JS[s][0]}">${JS[s][1]}</span></td><td>${rev}</td><td>${I.dots}</td></tr>`}).join('');
+
+const CAT=[['17.12.14.129-00000001','Бумага для печати',1],['17.12.14.129-00000002','Бумага для печати, высокой белизны'],['17.12.14.129-00000004','Бумага для печати, цветная'],['17.23.12.110-00000002','Бумага писчая'],['17.12.14.110-00000003','Бумага для плоттера рулонная'],['17.23.13.191-00000005','Блок бумажный для записей']];
+document.querySelector('[data-catalog]').innerHTML=CAT.map(([c,n,s])=>`<div style="padding:11px 16px;border-top:1px solid var(--line2);${s?'background:#F2FAF7;box-shadow:inset 3px 0 0 var(--primary)':''}">${code(c)}<div class="small" style="margin-top:2px">${n}</div></div>`).join('');
+
+const E=[['Скобы для степлера №24/6, 1000 шт','25.93.14.150-00000002','25.93.14.150-00000001',82],['Тонер для заправки Kyocera, 300 г','20.59.12.120-00000011','20.59.12.120-00000002',61],['Коврик для мыши тканевый','22.29.29.190-00000007','32.99.59.000-00000020',48],['Кабель HDMI 2.0, 3 м','27.32.13.190-00000004','27.33.13.190-00000001',64],['Батарейка АА щелочная, 1,5 В','27.20.11.000-00000002','27.20.11.000-00000001',87],['Маркер перманентный черный','32.99.12.130-00000003','32.99.12.130-00000001',73],['Лампа светодиодная E27, 10 Вт, 4000 К','27.40.15.150-00000012','27.40.15.150-00000009',69],['Губка для доски магнитная','22.29.29.190-00000041','32.99.59.000-00000003',42]];
+document.querySelector('[data-errors]').innerHTML=E.map(([t,g,p,v])=>`<tr><td>${t}</td><td>${code(g)}</td><td>${code(p)}</td><td><span class="conf ${lvl(v)}" style="--v:${v}">${v}%<i></i></span></td></tr>`).join('');
+
+(function(){const s=document.querySelector('[data-calib]'); const W=380,H=230,l=34,b=24,t=8,r=8; const bins=[[55,51],[65,62],[75,73],[85,82],[95,95]];
+ const x=v=>l+(v-50)/50*(W-l-r), y=v=>H-b-(v-40)/60*(H-b-t);
+ let g=''; [40,60,80,100].forEach(v=>g+=`<line x1="${l}" x2="${W-r}" y1="${y(v)}" y2="${y(v)}" stroke="#ECF0ED"/><text x="${l-6}" y="${y(v)+4}" font-size="11" text-anchor="end" fill="#8A9590">${v}%</text>`);
+ bins.forEach(([c,a])=>{const bw=(W-l-r)/5-14; g+=`<rect x="${x(c)-bw/2}" y="${y(a)}" width="${bw}" height="${H-b-y(a)}" rx="4" fill="#0E6B5C" opacity=".85"/><text x="${x(c)}" y="${y(a)-5}" font-size="11" text-anchor="middle" fill="#16201C" font-weight="600">${a}</text><text x="${x(c)}" y="${H-6}" font-size="11" text-anchor="middle" fill="#8A9590">${c-5}–${c+5}</text>`});
+ g+=`<line x1="${x(50)}" y1="${y(50)}" x2="${x(100)}" y2="${y(100)}" stroke="#8A9590" stroke-width="1.5" stroke-dasharray="5 4"/>`; s.innerHTML=g;})();
+
+const only=new URLSearchParams(location.search).get('only');
+if(only){document.body.classList.add('only'); document.getElementById(only).classList.add('show');}
+</script>
+</body>
+</html>
