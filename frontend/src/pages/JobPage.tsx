@@ -623,7 +623,11 @@ function BulkConfirm({ job }: { job: Job }) {
             defaultValue={Math.round(min * 100)}
             min={50}
             max={100}
-            onChange={(v) => (min = Number(v) / 100)}
+            onChange={(v) => {
+              // Пустое поле даёт "", а Number("") === 0 — это подтвердило бы всё подряд. Берём только число 50–100.
+              const n = typeof v === "number" ? v : Number.NaN;
+              min = Number.isFinite(n) && n >= 50 && n <= 100 ? n / 100 : Number.NaN;
+            }}
           />
           <Switch
             defaultChecked
@@ -639,7 +643,14 @@ function BulkConfirm({ job }: { job: Job }) {
       ),
       labels: { confirm: "Подтвердить", cancel: "Отмена" },
       confirmProps: { color: "primary" },
-      onConfirm: () =>
+      onConfirm: () => {
+        if (!Number.isFinite(min)) {
+          notifications.show({
+            color: "red",
+            message: "Порог должен быть числом от 50 до 100%. Ничего не подтверждено.",
+          });
+          return;
+        }
         bulk.mutate(
           { min_confidence: min, skip_flagged: skipFlagged },
           {
@@ -652,7 +663,8 @@ function BulkConfirm({ job }: { job: Job }) {
               }),
             onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
           },
-        ),
+        );
+      },
     });
   };
   return (
