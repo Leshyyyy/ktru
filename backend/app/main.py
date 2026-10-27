@@ -17,7 +17,7 @@ from backend.tasks.celery_app import create_celery
 
 from .errors import install_error_handlers
 from .middleware import REQUEST_ID_HEADER, BodySizeLimitMiddleware, RequestContextMiddleware
-from .routes import catalog, files, items, jobs, system
+from .routes import catalog, export, files, items, jobs, system
 
 API_PREFIX = "/api/v1"
 # Запас сверх лимита файла на служебные части multipart. Точный размер файла проверяет POST /files.
@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     install_error_handlers(app, max_file_mb=settings.max_file_mb)
-    for module in (files, jobs, items, catalog, system):
+    for module in (files, jobs, export, items, catalog, system):
         app.include_router(module.router, prefix=API_PREFIX)
 
     # add_middleware ставит новый слой снаружи: порядок от внешнего — CORS, контекст запроса, лимит тела.

@@ -53,7 +53,9 @@ curl -s $API/items/$ITEM | jq '{raw_text, extracted, predictions: [.predictions[
 ```bash
 curl -s -X POST $API/items/$ITEM/confirm | jq '{status, final}'
 VERSION=$(jq -r .catalog_version_id job.json)
-curl -s "$API/catalog/search?q=бумага&version_id=$VERSION" | jq '.items[] | {ktru_code, name}'
+# Кириллицу в адресе curl сам не кодирует, а uvicorn такой запрос отвергает — отсюда --data-urlencode.
+curl -s --get --data-urlencode "q=бумага" --data-urlencode "version_id=$VERSION" $API/catalog/search \
+  | jq '.items[] | {ktru_code, name}'
 curl -s -X PUT $API/items/$ITEM/decision -H 'Content-Type: application/json' \
   -d '{"ktru_code": "99.99.04.000-00000001", "reason": "так в ТЗ"}' | jq '{status, final}'
 curl -s -X POST $API/jobs/$JOB/confirm-bulk -H 'Content-Type: application/json' -d '{"min_confidence": 0.85}'
@@ -66,7 +68,14 @@ curl -s -X POST $API/jobs/$JOB/cancel | jq '{status}'   # 409 invalid_state, е�
 curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $API/jobs/$JOB   # 204
 ```
 
-Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.
+**7. Выгрузка** — когда задача завершена (`done`, `done_with_errors`) или отменена. `format`: `source` (как загружен;
+для pdf — xlsx), `xlsx`, `csv`, `json`. Число непроверенных позиций — в заголовке `X-Unreviewed-Count`.
 
-Выгрузка результата (`GET /jobs/{id}/export`) появится следующей; до тех пор её можно посмотреть на моке фронтенда
-(`cd frontend && npm run dev`).
+```bash
+curl -s -D headers.txt -o result.xlsx "$API/jobs/$JOB/export"
+grep -i -E 'x-unreviewed-count|content-disposition' headers.txt
+curl -s "$API/jobs/$JOB/export?format=json" | jq '.[0]'
+curl -s "$API/jobs/$JOB/export?allow_unreviewed=false" | jq .error   # 409 unreviewed_items, если такие остались
+```
+
+Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.
