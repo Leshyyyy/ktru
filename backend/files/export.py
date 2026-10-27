@@ -78,8 +78,9 @@ def format_content_disposition(filename: str) -> str:
     """
     Формирует заголовок Content-Disposition по RFC 5987 / RFC 6266
     с корректной кодировкой кириллических имён файлов.
+    Запасное имя filename="..." должно быть строго ASCII (latin-1) для Starlette/ASGI.
     """
-    ascii_name = "".join(c if (c.isalnum() or c in "._-") else "_" for c in filename) or "export"
+    ascii_name = "".join(c if (c.isascii() and (c.isalnum() or c in "._-")) else "_" for c in filename) or "export"
     quoted_name = quote(filename.encode("utf-8"))
     return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted_name}'
 

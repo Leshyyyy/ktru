@@ -94,6 +94,19 @@ def test_format_content_disposition():
     assert "filename*=UTF-8''" in header
     assert "%D1%81%D0%BF%D0%B5%D1%86%D0%B8%D1%84%D0%B8%D0%BA%D0%B0%D1%86%D0%B8%D1%8F" in header
 
+    # Заголовок должен быть строго ASCII и успешно кодироваться в latin-1 (требование Starlette/HTTP)
+    header_bytes = header.encode("latin-1")
+    assert isinstance(header_bytes, bytes)
+    assert header.isascii()
+
+    # Запасное имя filename="..." должно состоять только из ASCII (без русских букв)
+    import re
+    match = re.search(r'filename="([^"]+)"', header)
+    assert match is not None
+    fallback_name = match.group(1)
+    assert fallback_name.isascii()
+    assert fallback_name == "_____________2026.xlsx"
+
 
 def test_export_csv_structure_and_bom(sample_headers, sample_export_items):
     """Проверка структуры CSV, экранирования формул и UTF-8 BOM."""
