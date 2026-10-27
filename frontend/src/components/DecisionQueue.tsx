@@ -74,12 +74,13 @@ export function DecisionQueueProvider({ children }: { children: ReactNode }) {
       const row = decision.item.row_index + 1;
       const label = decision.kind === "confirm" ? `Строка ${row} подтверждена` : `Строка ${row}: код ${decision.code}`;
       // Повторное решение по той же позиции заменяет предыдущее, ещё не отправленное.
-      setPending((list) => {
-        list.filter((x) => x.decision.item.item_id === decision.item.item_id).forEach((x) => clearTimeout(x.timer));
-        const p: Pending = { id, decision, label, due: Date.now() + UNDO_MS, timer: 0 };
-        p.timer = window.setTimeout(() => send(p), UNDO_MS);
-        return [...list.filter((x) => x.decision.item.item_id !== decision.item.item_id), p];
-      });
+      // Таймеры заводим снаружи setPending: в StrictMode функция-обновление вызывается дважды,
+      // и запрос ушёл бы два раза.
+      const sameItem = (x: Pending) => x.decision.item.item_id === decision.item.item_id;
+      pendingRef.current.filter(sameItem).forEach((x) => clearTimeout(x.timer));
+      const p: Pending = { id, decision, label, due: Date.now() + UNDO_MS, timer: 0 };
+      p.timer = window.setTimeout(() => send(p), UNDO_MS);
+      setPending((list) => [...list.filter((x) => !sameItem(x)), p]);
     },
     [send],
   );

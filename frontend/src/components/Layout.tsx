@@ -43,7 +43,7 @@ export function Layout() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="sm">
+      <AppShell.Navbar p="sm" style={{ overflow: "hidden" }}>
         <Stack gap={4}>
           {NAV.map((n) => (
             <NavLink key={n.to} to={n.to} end={n.end} className={classes.mobileLink}>
