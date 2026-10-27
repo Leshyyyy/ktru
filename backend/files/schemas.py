@@ -83,3 +83,39 @@ class ParsedRow(BaseModel):
     row_index: int = Field(ge=0, description="Порядковый номер строки в файле (с 0, без заголовка)")
     raw_text: str = Field(description="Склейка name + description + characteristics через пробел")
     raw_row: List[str] = Field(description="Исходные строковые значения всех колонок строки")
+
+
+class ExportFormat(str, Enum):
+    """Поддерживаемые форматы выгрузки результата."""
+
+    SOURCE = "source"
+    XLSX = "xlsx"
+    CSV = "csv"
+    JSON = "json"
+
+
+class ExportItem(BaseModel):
+    """Данные позиции для экспорта (соответствуют v_item_final + items)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    item_id: Optional[UUID] = None
+    row_index: int = Field(default=0, ge=0)
+    raw_row: List[str] = Field(default_factory=list, description="Исходные значения строки")
+    ktru_code: Optional[str] = Field(default=None, description="Итоговый код КТРУ")
+    ktru_name: Optional[str] = Field(default=None, description="Наименование позиции КТРУ")
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Уверенность от 0 до 1")
+    status: str = Field(default="processed", description="Статус: pending, processed, needs_review, confirmed, corrected, failed")
+    source: Optional[str] = Field(default=None, description="Источник: user или prediction")
+    flags: List[str] = Field(default_factory=list, description="Предупреждения")
+    error: Optional[str] = Field(default=None, description="Текст ошибки при failed")
+
+
+class ExportResult(BaseModel):
+    """Результат генерации файла экспорта."""
+
+    content: bytes = Field(description="Байтовое содержимое файла")
+    media_type: str = Field(description="MIME-тип для заголовка Content-Type")
+    filename: str = Field(description="Имя файла для скачивания")
+    unreviewed_count: int = Field(ge=0, description="Число непроверенных позиций (processed и needs_review)")
+    content_disposition: str = Field(description="Заголовок Content-Disposition по RFC 5987 / RFC 6266")
