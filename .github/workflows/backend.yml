@@ -11,6 +11,8 @@ on:
       - ".dockerignore"
       - ".env.example"
       - ".github/workflows/backend.yml"
+      # Образ frontend собирается в job compose (npm run build внутри Dockerfile).
+      - "frontend/**"
   push:
     branches: [dev, main]
     paths:
@@ -21,6 +23,8 @@ on:
       - ".dockerignore"
       - ".env.example"
       - ".github/workflows/backend.yml"
+      # Образ frontend собирается в job compose (npm run build внутри Dockerfile).
+      - "frontend/**"
 
 # Только чтение репозитория: workflow ничего не публикует и секретов не использует.
 permissions:
@@ -92,6 +96,17 @@ jobs:
           done
           curl -sS http://127.0.0.1:8000/api/v1/health || true
           exit 1
+      - name: Интерфейс и API через nginx (сервис frontend, :8080)
+        run: |
+          for _ in $(seq 1 24); do
+            if curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'; then break; fi
+            sleep 5
+          done
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          # Адрес страницы SPA отдаёт index.html, /api/ уходит в api.
+          curl -fsS http://127.0.0.1:8080/jobs/00000000-0000-0000-0000-000000000000 | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:8080/api/v1/health \
+            | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin)["ready"] else 1)'
       - name: Логи при ошибке
         if: failure()
         run: |

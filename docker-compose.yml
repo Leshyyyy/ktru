@@ -1,4 +1,5 @@
 # AI-классификатор КТРУ. Запуск: docker compose up --build (CPU, без ключей LLM).
+# Интерфейс — http://localhost:8080 (он же проксирует /api/), API напрямую — http://localhost:8000/api/v1.
 #
 # Все переменные и значения по умолчанию — в .env.example; свои значения кладите в .env.
 # Пароли по умолчанию — только для локального запуска: PostgreSQL и Redis сидят во внутренней сети
@@ -281,6 +282,32 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+
+  # Веб-интерфейс: nginx отдаёт собранный фронтенд и проксирует /api/ в api (frontend/nginx.conf).
+  # Адрес у интерфейса и API один, поэтому CORS не нужен. Базы и Redis не видит: только сеть public.
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # pid и временные файлы nginx-unprivileged лежат в /tmp.
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [public]
+    logging: *logging
 
 volumes:
   pgdata:
