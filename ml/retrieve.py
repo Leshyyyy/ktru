@@ -30,8 +30,22 @@ log = logging.getLogger(__name__)
 W_VECTOR = 0.55
 W_NAME = 0.45
 W_DENSE, W_TFIDF, W_DENSE_NAME = 0.35, 0.25, 0.40
+# TF-IDF: доля индекса по одному наименованию КТРУ, остальное — индекс наименования с характеристиками.
+# На живых названиях индекс по наименованию сильнее, на строках с характеристиками — полный (ml_probe).
+TFIDF_NAME_SHARE = 0.5
 PREFILTER_GAP = 0.25  # в предварительный отбор идут позиции не хуже лучшей минус этот зазор
 PREFILTER_MAX = 400
+
+# Категории ОКПД2 от ml.category: кандидаты берутся внутри CAT_TOP лучших категорий (пока их суммарная доля
+# голосов не дойдёт до CAT_MASS), доля категории входит в оценку с весом W_CAT. Из всего каталога добавляется
+# FALLBACK_N лучших по тексту — для кодов, которых нет среди карточек СТЕ (≈19% разметки v3), и для ошибок модели.
+# Доля входит в степени CAT_POWER: неуверенный голос (доля < 0,4 верна в ~⅓ случаев) почти не сдвигает оценку,
+# уверенный (≥ 0,7 — верна в ~90%) сдвигает сильно. Подобрано на ste_dev и v3 dev (ml/CLAUDE.md).
+CAT_TOP = 3
+CAT_MASS = 0.95
+W_CAT = 0.5
+CAT_POWER = 2.0
+FALLBACK_N = 15
 
 
 class MemoryRetriever:
@@ -43,6 +57,13 @@ class MemoryRetriever:
         texts = [e.search_text() for e in self.items]
         self.vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), sublinear_tf=True)
         self.matrix = self.vectorizer.fit_transform(texts) if texts else None
+        self.name_vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), sublinear_tf=True)
+        self.name_matrix = self.name_vectorizer.fit_transform(self.names) if texts else None
+        self.okpd2 = [e.okpd2_code for e in self.items]
+        by_okpd: dict[str, list[int]] = {}
+        for j, code in enumerate(self.okpd2):
+            by_okpd.setdefault(code, []).append(j)
+        self.by_okpd = {code: np.array(js) for code, js in by_okpd.items()}
         self.dense = self._catalog_embeddings(texts, cache_dir) if embedder is not None and texts else None
         # Подтверждённые пользователями пары «нормализованный текст → код» (кэш точных совпадений).
         self.examples: dict[str, str] = {}
@@ -69,13 +90,17 @@ class MemoryRetriever:
 
     def _vector_scores(self, texts: list[str]) -> tuple[np.ndarray, Optional[np.ndarray]]:
         """→ (TF-IDF косинус, косинус эмбеддингов или None)."""
-        tfidf = (self.vectorizer.transform(texts) @ self.matrix.T).toarray()
+        full = (self.vectorizer.transform(texts) @ self.matrix.T).toarray()
+        name = (self.name_vectorizer.transform(texts) @ self.name_matrix.T).toarray()
+        tfidf = TFIDF_NAME_SHARE * name + (1 - TFIDF_NAME_SHARE) * full
         if self.dense is None:
             return tfidf, None
         q = np.asarray(self.embedder.embed(texts, kind="query"), dtype=np.float32)
         return tfidf, np.clip(q @ self.dense.T, 0.0, 1.0)
 
-    def search_batch(self, queries: list[SearchQuery], use_feedback: bool = True) -> list[list[Candidate]]:
+    def search_batch(self, queries: list[SearchQuery], use_feedback: bool = True,
+                     categories: Optional[list[dict[str, float]]] = None) -> list[list[Candidate]]:
+        """categories — доли ОКПД2 от модели категорий для каждого запроса (или None — искать по всему каталогу)."""
         if not queries or not self.items:
             return [[] for _ in queries]
         tfidf, dense = self._vector_scores([q.text for q in queries])
@@ -90,9 +115,8 @@ class MemoryRetriever:
 
         out = []
         for i, q in enumerate(queries):
-            row = fused[i]
-            pool = np.flatnonzero(row >= row.max() - PREFILTER_GAP)
-            pool = pool[np.argsort(-row[pool])][:PREFILTER_MAX]
+            probs = categories[i] if categories else None
+            row, pool = self._pool(fused[i], probs)
             qctx = build_query_context(q.text)
             # Предварительный порядок: поиск + обязательные характеристики (без них не различить одноимённые позиции).
             prelim = []
@@ -106,6 +130,30 @@ class MemoryRetriever:
                 chosen = [self._index[hit]] + chosen[: q.top_k - 1]
             out.append([self._candidate(j, vec[i, j], name[i, j], row[j]) for j in chosen])
         return out
+
+    def _pool(self, fused: np.ndarray, probs: Optional[dict[str, float]]) -> tuple[np.ndarray, np.ndarray]:
+        """→ (оценка с учётом категории, индексы предварительного отбора по убыванию оценки)."""
+        cats, mass = [], 0.0
+        for code, p in (probs or {}).items():  # доли уже по убыванию
+            if code in self.by_okpd:
+                cats.append(code)
+                mass += p
+                if len(cats) >= CAT_TOP or mass >= CAT_MASS:
+                    break
+        if not cats:  # модели категорий нет или она не знает ни одной категории каталога — поиск по всему каталогу
+            pool = np.flatnonzero(fused >= fused.max() - PREFILTER_GAP)
+            return fused, pool[np.argsort(-fused[pool])][:PREFILTER_MAX]
+        row = (1 - W_CAT) * fused
+        inside = np.concatenate([self.by_okpd[c] for c in cats])
+        for c in cats:
+            row[self.by_okpd[c]] += W_CAT * probs[c] ** CAT_POWER
+        inside = inside[row[inside] >= row[inside].max() - PREFILTER_GAP]
+        inside = inside[np.argsort(-row[inside])][:PREFILTER_MAX]
+        k = min(FALLBACK_N + len(inside), len(row) - 1)
+        outside = np.argpartition(-row, k)[: k + 1]
+        outside = [j for j in outside[np.argsort(-row[outside])] if self.okpd2[j] not in cats][:FALLBACK_N]
+        pool = np.concatenate([inside, np.array(outside, dtype=inside.dtype)])
+        return row, pool[np.argsort(-row[pool])]
 
     def example_vote(self, text: str, ktru_code: str) -> float:
         return 1.0 if self.examples.get(normalize_text(text)) == ktru_code else 0.0

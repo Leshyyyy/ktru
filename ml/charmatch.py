@@ -20,6 +20,10 @@ W_REQUIRED = 1.0
 W_OPTIONAL = 0.35
 # Сглаживание: позиция, у которой совпало больше характеристик, при равной доле совпадений выше.
 EVIDENCE_PRIOR = 0.5
+# Слабые свидетельства: число нашлось только по единице измерения где-то в тексте, а не рядом с названием
+# характеристики; «да» выведено из одного упоминания слова («принтер» → «Принтер: Да»). На живых строках
+# такие совпадения уводили в чужие категории (разбор Таира, ml_probe), поэтому голос у них меньше.
+W_WEAK = 0.3
 ANCHOR_WINDOW = 50
 ANCHOR_CLUSTER = 30  # слова одного названия характеристики стоят рядом
 
@@ -131,14 +135,14 @@ class CharMatcher:
             pat = self._patterns[value_norm] = re.compile(rf"(?<![\w]){re.escape(value_norm)}(?![\w])")
         return bool(pat.search(text))
 
-    def match_char(self, char: CatalogChar, q: QueryContext) -> tuple[str, Optional[str], float]:
-        """→ (status, что найдено в тексте, качество совпадения 0..1)."""
+    def match_char(self, char: CatalogChar, q: QueryContext) -> tuple[str, Optional[str], float, bool]:
+        """→ (status, что найдено в тексте, качество совпадения 0..1, слабое ли свидетельство)."""
         anchor = q.anchor(self._stems_for(char))
         ranges = [c for c in char.constraints if isinstance(c, Range)]
         texts = [c for c in char.constraints if isinstance(c, Text)]
 
         if ranges:
-            nums = []
+            nums, weak = [], False
             if anchor:
                 limit = anchor[1] + ANCHOR_WINDOW
                 stop = re.search(r"[;,]", q.text[anchor[1]:limit])
@@ -147,6 +151,7 @@ class CharMatcher:
                 nums = [n for n in q.numbers if anchor[1] <= n.start < limit and units_compatible(n.unit, char.unit_key)]
             if not nums and char.unit_key:
                 nums = [n for n in q.numbers if n.unit == char.unit_key]
+                weak = True
             if nums:
                 best = None
                 for n in nums:
@@ -158,8 +163,8 @@ class CharMatcher:
                         if qual is not None and (best is None or qual > best[1]):
                             best = (n, qual)
                 if best:
-                    return "match", _span(q, best[0]), best[1]
-                return "mismatch", _span(q, nums[0]), 0.0
+                    return "match", _span(q, best[0]), best[1], weak
+                return "mismatch", _span(q, nums[0]), 0.0, weak
 
         if texts:
             # Чем шире список допустимых значений, тем слабее совпадение говорит именно об этой позиции.
@@ -169,18 +174,20 @@ class CharMatcher:
                 if anchor:
                     before = q.text[max(0, anchor[0] - 5):anchor[0]]
                     after = q.text[anchor[1]:anchor[1] + 8]
-                    said = "нет" if ("без" in before or re.match(r"\s*:?\s*нет", after)) else "да"
-                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), breadth
-                return "missing", None, 0.0
+                    explicit = re.match(r"\s*:?\s*(да|нет)(?![а-яa-z])", after)
+                    said = "нет" if ("без" in before or (explicit and explicit.group(1) == "нет")) else "да"
+                    weak = not explicit and "без" not in before
+                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), breadth, weak
+                return "missing", None, 0.0, False
             for t in texts:
                 if self._contains(q.text, t.norm):
-                    return "match", t.raw, breadth
+                    return "match", t.raw, breadth, False
             # В тексте значение этой характеристики, которого нет у позиции: другой формат, другой тип.
             own = {t.norm for t in texts}
             for other in self.vocab.get(char.name, ()):
                 if other not in own and len(other) >= 2 and self._contains(q.text, other):
-                    return "mismatch", other, 0.0
-        return "missing", None, 0.0
+                    return "mismatch", other, 0.0, False
+        return "missing", None, 0.0, False
 
     def match_entry(self, entry: CatalogEntry, q: QueryContext, required_only: bool = False) -> EntryMatch:
         matches, qualities = [], {}
@@ -190,8 +197,8 @@ class CharMatcher:
         for c in entry.chars:
             if required_only and not c.required:
                 continue
-            status, found, qual = self.match_char(c, q)
-            w = W_REQUIRED if c.required else W_OPTIONAL
+            status, found, qual, weak = self.match_char(c, q)
+            w = (W_REQUIRED if c.required else W_OPTIONAL) * (W_WEAK if weak else 1.0)
             if c.required:
                 n_req += 1
                 req_ok += status == "match"

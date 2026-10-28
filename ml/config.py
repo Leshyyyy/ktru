@@ -54,6 +54,10 @@ class Settings:
     catalog_version_id: str = field(default_factory=lambda: _env("KTRU_CATALOG_VERSION_ID"))
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     calibrator_path: str = field(default_factory=lambda: _env("CALIBRATOR_PATH", str(MODELS / "calibrator.joblib")))
+    # Модель категорий ОКПД2 по карточкам СТЕ (python -m ml.category). Строится из данных СТЕ, поэтому не в git;
+    # нет файла — поиск по всему каталогу, как до двухступенчатой схемы. «-» — выключить.
+    category_model_path: str = field(
+        default_factory=lambda: _env("CATEGORY_MODEL_PATH", str(ARTIFACTS / "category.joblib")))
     # Кэш эмбеддингов каталога; в docker-compose — том /data/models (переживает перезапуск воркера).
     embed_cache_dir: str = field(default_factory=lambda: _env("EMBED_CACHE_DIR", str(ARTIFACTS / "embeddings")))
     llm_cache_path: str = field(default_factory=lambda: _env("LLM_CACHE_PATH", str(ARTIFACTS / "llm_cache.jsonl")))

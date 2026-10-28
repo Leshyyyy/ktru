@@ -3,8 +3,8 @@
     from ml.pipeline import get_pipeline
     results = get_pipeline().classify_batch(items, catalog_version_id, options)
 
-Конвейер: атрибуты (правила) → поиск кандидатов (вектор + название + обязательные характеристики)
-→ полная сверка характеристик → реранкер для неуверенных → калибровка уверенности → топ-3 с пояснениями.
+Конвейер: атрибуты (правила) → категории ОКПД2 по карточкам СТЕ (ml.category, если модель есть)
+→ поиск кандидатов внутри категорий (вектор + название + обязательные характеристики) → полная сверка характеристик → реранкер для неуверенных → калибровка уверенности → топ-3 с пояснениями.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from contracts.ml_contracts import (
 )
 
 from . import calibrate as calibration
+from . import category as categories
 from .catalog import Catalog, entry_from_row, load_jsonl
 from .charmatch import CharMatcher, EntryMatch, build_query_context
 from .config import Settings
@@ -69,9 +70,12 @@ class Ranked:
     timings_ms: dict[str, float] = field(default_factory=dict)
 
 
+_LOAD = object()  # модель категорий: загрузить по settings.category_model_path
+
+
 class KtruPipeline:
     def __init__(self, settings: Optional[Settings] = None, catalog: Optional[Catalog] = None,
-                 calibrator=None, reranker=None, extractor=None):
+                 calibrator=None, reranker=None, extractor=None, category=_LOAD):
         t0 = time.perf_counter()
         self.settings = settings or Settings()
         self.catalog = catalog or Catalog(load_jsonl(self.settings.resolved_catalog_path()))
@@ -88,6 +92,7 @@ class KtruPipeline:
         else:
             self.reranker, rerank_degraded = make_reranker(self.settings)
         self.calibrator = calibrator or calibration.load(self.settings.calibrator_path)
+        self.category = categories.load(self.settings.category_model_path) if category is _LOAD else category
         # LLM была нужна (hybrid/llm-извлечение или llm-реранкер), но её нет → режим degraded.
         self.llm_wanted_but_missing = rerank_degraded or (
             self.settings.extractor in ("llm", "hybrid") and not self.settings.llm_enabled
@@ -156,9 +161,16 @@ class KtruPipeline:
         t_extract = time.perf_counter() - t
 
         t = time.perf_counter()
+        cats = None
+        if self.category is not None:
+            texts = [categories.query_text(it.text, it.columns.get("name", "")) for it in items]
+            cats = [probs for probs, _ in self.category.predict_batch(texts)]
+        t_category = time.perf_counter() - t
+
+        t = time.perf_counter()
         queries = [SearchQuery(text=it.text, extracted=ex, catalog_version_id="", top_k=opts.top_k)
                    for it, ex in zip(items, extracted)]
-        cands = self.retriever.search_batch(queries, use_feedback=use_feedback)
+        cands = self.retriever.search_batch(queries, use_feedback=use_feedback, categories=cats)
         t_retrieve = time.perf_counter() - t
 
         t = time.perf_counter()
@@ -188,7 +200,8 @@ class KtruPipeline:
         for r in ranked:
             self._features(r, use_feedback)
         per = {k: v * 1000 / n for k, v in
-               (("extract", t_extract), ("retrieve", t_retrieve), ("match", t_match), ("rerank", t_rerank))}
+               (("extract", t_extract), ("category", t_category), ("retrieve", t_retrieve), ("match", t_match),
+                ("rerank", t_rerank))}
         per["total"] = sum(per.values())
         for r in ranked:
             r.timings_ms = dict(per)
@@ -287,9 +300,12 @@ class CatalogVersions:
 
     KEEP = 2
 
-    def __init__(self, settings: Optional[Settings] = None, calibrator=None, reranker=None, extractor=None):
+    def __init__(self, settings: Optional[Settings] = None, calibrator=None, reranker=None, extractor=None,
+                 category=_LOAD):
         self.settings = settings or Settings()
         self._calibrator = calibrator or calibration.load(self.settings.calibrator_path)
+        # Модель категорий от версии каталога не зависит: коды ОКПД2, которых нет в версии, поиск пропускает.
+        self._category = categories.load(self.settings.category_model_path) if category is _LOAD else category
         self._reranker = reranker
         self._extractor = extractor or RulesExtractor()
         self._versions: OrderedDict[str, KtruPipeline] = OrderedDict()
@@ -306,7 +322,7 @@ class CatalogVersions:
 
     def _add(self, version_id: str, catalog: Catalog) -> int:
         engine = KtruPipeline(self.settings, catalog=catalog, calibrator=self._calibrator,
-                              reranker=self._reranker, extractor=self._extractor)
+                              reranker=self._reranker, extractor=self._extractor, category=self._category)
         self._reranker = self._reranker or engine.reranker
         with self._lock:
             engine.add_examples(self._examples)

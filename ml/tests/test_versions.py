@@ -17,7 +17,7 @@ V2 = [_row("77.77.01.000-00000002", "Ноутбук"), _row("77.77.02.000-000000
 
 
 def _mgr():
-    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker())
+    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker(), category=None)
     m.load_version("v1", V1)
     return m
 
@@ -58,6 +58,6 @@ def test_examples_reach_current_and_future_versions():
 
 
 def test_file_catalog_without_version_serves_any_job_version():
-    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker())
+    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker(), category=None)
     m.load_version("", V1)  # как get_pipeline() с KTRU_CATALOG_PATH и без KTRU_CATALOG_VERSION_ID
     assert _top(m, "3f1c0e2a-uuid-from-db").predictions[0].ktru_code == "77.77.01.000-00000001"

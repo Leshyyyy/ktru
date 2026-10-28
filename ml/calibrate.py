@@ -1,9 +1,13 @@
 """Калибровка уверенности: признаки кандидата → вероятность, что именно этот код верный.
 
-    python -m ml.calibrate --data data/ktru/eval/dev_synth.jsonl
+    python -m ml.calibrate --data data/ktru/v2/eval_samples_v3_dev.jsonl data/ktru/ste/ste_dev.jsonl
 
-обучает логистическую регрессию + изотоническую калибровку на dev и сохраняет ml/artifacts/calibrator.joblib.
+обучает логистическую регрессию + изотоническую калибровку на dev и сохраняет ml/models/calibrator.joblib.
 Пока файла нет, работает эвристика HeuristicCalibrator.
+
+Наборы из СТЕ (эталон «<ОКПД2>-X», ml.ste_eval) знают только категорию. Из них берутся позиции, у ОКПД2 которых
+в каталоге одна позиция для поиска: там верный ОКПД2 означает верный код. Без живых строк калибратор,
+обученный на одной синтетике, завышает уверенность на настоящих заявках.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections import Counter
 from pathlib import Path
 
 from contracts.ml_contracts import FEATURE_NAMES
@@ -83,7 +88,8 @@ def main() -> None:
     from .pipeline import KtruPipeline  # noqa: PLC0415
 
     ap = argparse.ArgumentParser(description="Обучить калибратор уверенности на dev")
-    ap.add_argument("--data", required=True, help="JSONL разметки (формат docs/analytics/09-data-quality.md)")
+    ap.add_argument("--data", required=True, nargs="+",
+                    help="JSONL разметки (формат docs/analytics/09-data-quality.md); можно несколько")
     ap.add_argument("--split", default="dev")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
@@ -91,9 +97,19 @@ def main() -> None:
         raise SystemExit("Калибратор обучается только на dev (правила честной оценки, раздел 9).")
 
     settings = Settings()
-    samples = [json.loads(line) for line in open(args.data, encoding="utf-8") if line.strip()]
+    samples = [json.loads(line) for path in args.data for line in open(path, encoding="utf-8") if line.strip()]
     samples = [s for s in samples if s.get("split") == "dev"]
     pipe = KtruPipeline(settings, calibrator=HeuristicCalibrator())
+    per_okpd = Counter(e.okpd2_code for e in pipe.retriever.items)
+    single = {e.okpd2_code: e.ktru_code for e in pipe.retriever.items if per_okpd[e.okpd2_code] == 1}
+    for s in samples:
+        gold = s["expected_ktru_code"]
+        if gold.endswith("-X"):
+            s["expected_ktru_code"] = single.get(gold[:-2], "")
+    skipped = sum(not s["expected_ktru_code"] for s in samples)
+    samples = [s for s in samples if s["expected_ktru_code"]]
+    if skipped:
+        print(f"Позиций СТЕ без однозначного кода (в ОКПД2 несколько позиций КТРУ) пропущено: {skipped}")
     items = [RawItem(item_id=s["id"], text=s["raw_text"]) for s in samples]
     ranked = pipe.rank(items, use_feedback=False)
 
