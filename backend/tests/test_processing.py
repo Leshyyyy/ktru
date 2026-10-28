@@ -153,26 +153,11 @@ def _count(stack: Stack, table: Any) -> int:
         return session.scalar(select(func.count()).select_from(table))
 
 
-def _parse_only(stack: Stack, job_id: str) -> list[tuple[str, list[str]]]:
-    """Только разбор: пачки остаются в очереди нетронутыми."""
-    stack.queue.parse.remove(job_id)
-    processing.parse_job(stack.engine, stack.settings, stack.queue, uuid.UUID(job_id))
-    chunks, stack.queue.chunks = stack.queue.chunks, []
-    return chunks
-
-
-def _run(stack: Stack, chunk: tuple[str, list[str]], pipeline: Any = None) -> None:
-    job_id, item_ids = chunk
-    processing.process_chunk(
-        stack.engine, stack.settings, pipeline or StubPipeline(), uuid.UUID(job_id), [uuid.UUID(i) for i in item_ids]
-    )
-
-
 @pytest.mark.db
 def test_items_go_to_ml_in_chunks_of_50(stack: Stack) -> None:
     rows = [[f"Товар номер {n}", "", 1, "шт"] for n in range(120)]
     job_id = _job(stack, rows)
-    chunks = _parse_only(stack, job_id)
+    chunks = stack.parse_only(job_id)
     assert [len(ids) for _, ids in chunks] == [50, 50, 20]
     job = _job_row(stack, job_id)
     assert (job.status, job.total_items, job.started_at is not None) == ("processing", 120, True)
@@ -184,11 +169,11 @@ def test_items_go_to_ml_in_chunks_of_50(stack: Stack) -> None:
 @pytest.mark.db
 def test_repeated_chunk_changes_nothing(stack: Stack) -> None:
     job_id = _job(stack)
-    [chunk] = _parse_only(stack, job_id)
-    _run(stack, chunk)
+    [chunk] = stack.parse_only(job_id)
+    stack.run_chunk(chunk)
     predictions, job = _count(stack, models.Prediction), _job_row(stack, job_id)
     assert (job.status, job.processed_items) == ("done", 3)
-    _run(stack, chunk)  # повторная доставка той же пачки
+    stack.run_chunk(chunk)  # повторная доставка той же пачки
     assert _count(stack, models.Prediction) == predictions
     assert _job_row(stack, job_id).processed_items == 3
 
@@ -197,17 +182,17 @@ def test_repeated_chunk_changes_nothing(stack: Stack) -> None:
 def test_cancel_and_delete_in_the_middle(stack: Stack) -> None:
     rows = [[f"Товар номер {n}", "", 1, "шт"] for n in range(60)]
     job_id = _job(stack, rows)
-    first, second = _parse_only(stack, job_id)
-    _run(stack, first)
+    first, second = stack.parse_only(job_id)
+    stack.run_chunk(first)
     assert stack.client.post(f"/api/v1/jobs/{job_id}/cancel").json()["status"] == "cancelled"
-    _run(stack, second)  # пачка после отмены пропускает работу
+    stack.run_chunk(second)  # пачка после отмены пропускает работу
     job = _job_row(stack, job_id)
     assert (job.status, job.processed_items) == ("cancelled", 50)
 
     other = _job(stack)
-    [chunk] = _parse_only(stack, other)
+    [chunk] = stack.parse_only(other)
     assert stack.client.delete(f"/api/v1/jobs/{other}").status_code == 204
-    _run(stack, chunk)  # задачи больше нет — воркер тихо завершается
+    stack.run_chunk(chunk)  # задачи больше нет — воркер тихо завершается
     processing.fail_chunk(stack.engine, uuid.UUID(other), [uuid.uuid4()], "x")
 
 
@@ -222,7 +207,7 @@ def test_cancel_while_file_is_parsed(stack: Stack, monkeypatch: pytest.MonkeyPat
         return rows
 
     monkeypatch.setattr(processing, "parse_rows", parse_and_cancel)
-    assert _parse_only(stack, job_id) == []
+    assert stack.parse_only(job_id) == []
     assert (_job_row(stack, job_id).status, _count(stack, models.Item)) == ("cancelled", 0)
 
 
@@ -254,7 +239,7 @@ def test_all_items_failed_means_failed_job(stack: Stack) -> None:
 @pytest.mark.db
 def test_fail_chunk_after_last_retry(stack: Stack) -> None:
     job_id = _job(stack)
-    [(_, item_ids)] = _parse_only(stack, job_id)
+    [(_, item_ids)] = stack.parse_only(job_id)
     processing.fail_chunk(stack.engine, uuid.UUID(job_id), [uuid.UUID(i) for i in item_ids], "Сбой.")
     job = _job_row(stack, job_id)
     assert (job.status, job.failed_items, job.processed_items) == ("failed", 3, 0)
@@ -307,8 +292,8 @@ def test_watchdog_requeues_stale_jobs(stack: Stack) -> None:
     queued = _job(stack)
     stack.queue.parse.clear()  # сообщение о разборе потеряно
     processing_job = _job(stack, [[f"Товар номер {n}", "", 1, "шт"] for n in range(60)])
-    first, _lost = _parse_only(stack, processing_job)
-    _run(stack, first)
+    first, _lost = stack.parse_only(processing_job)
+    stack.run_chunk(first)
 
     assert processing.requeue_stale_jobs(stack.engine, stack.queue, stale_after=timedelta(0)) == 2
     assert stack.queue.parse == [queued]

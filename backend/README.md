@@ -47,7 +47,21 @@ ITEM=$(curl -s "$API/jobs/$JOB/items?page_size=1" | jq -r '.items[0].item_id')
 curl -s $API/items/$ITEM | jq '{raw_text, extracted, predictions: [.predictions[] | {rank, ktru_code, name, confidence}]}'
 ```
 
-**5. Отмена и удаление.**
+**5. Решения.** Подтвердить предложенный код, указать свой (код ищется в каталоге задачи), подтвердить всё не ниже
+порога. Позиции с предупреждениями массово не подтверждаются, пока не передать `"skip_flagged": false`.
+
+```bash
+curl -s -X POST $API/items/$ITEM/confirm | jq '{status, final}'
+VERSION=$(jq -r .catalog_version_id job.json)
+# Кириллицу в адресе curl сам не кодирует, а uvicorn такой запрос отвергает — отсюда --data-urlencode.
+curl -s --get --data-urlencode "q=бумага" --data-urlencode "version_id=$VERSION" $API/catalog/search \
+  | jq '.items[] | {ktru_code, name}'
+curl -s -X PUT $API/items/$ITEM/decision -H 'Content-Type: application/json' \
+  -d '{"ktru_code": "99.99.04.000-00000001", "reason": "так в ТЗ"}' | jq '{status, final}'
+curl -s -X POST $API/jobs/$JOB/confirm-bulk -H 'Content-Type: application/json' -d '{"min_confidence": 0.85}'
+```
+
+**6. Отмена и удаление.**
 
 ```bash
 curl -s -X POST $API/jobs/$JOB/cancel | jq '{status}'   # 409 invalid_state, если задача уже завершена
@@ -56,5 +70,5 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $API/jobs/$JOB   # 204
 
 Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.
 
-Подтверждение и правка кода, массовое подтверждение, поиск по каталогу и выгрузка появятся следующими (план на 28.10);
-до тех пор их можно посмотреть на моке фронтенда (`cd frontend && npm run dev`).
+Выгрузка результата (`GET /jobs/{id}/export`) появится следующей; до тех пор её можно посмотреть на моке фронтенда
+(`cd frontend && npm run dev`).

@@ -123,6 +123,58 @@ class ItemList(BaseModel):
     page_size: int
 
 
+# --- Решения --------------------------------------------------------------------------------------------------
+
+
+class DecisionCreate(BaseModel):
+    ktru_code: str = Field(min_length=1, max_length=64)
+    reason: str | None = Field(None, max_length=500)
+
+
+class BulkConfirm(BaseModel):
+    min_confidence: float = Field(ge=0, le=1)
+    skip_flagged: bool = True
+
+
+class BulkConfirmResult(BaseModel):
+    confirmed_count: int
+
+
+# --- Каталог --------------------------------------------------------------------------------------------------
+
+
+class CatalogCharacteristic(BaseModel):
+    name: str
+    values: list[str]
+    required: bool = False
+
+
+class CatalogItem(BaseModel):
+    ktru_code: str
+    okpd2_code: str
+    name: str
+    description: str | None
+    unit: str | None
+    characteristics: list[CatalogCharacteristic]
+
+
+class CatalogSearchResult(BaseModel):
+    items: list[CatalogItem]
+
+
+class CatalogVersion(BaseModel):
+    version_id: uuid.UUID
+    source: str
+    status: Literal["importing", "ready", "failed"]
+    items_count: int
+    note: str | None
+    loaded_at: datetime
+
+
+class CatalogVersionList(BaseModel):
+    items: list[CatalogVersion]
+
+
 # --- Система --------------------------------------------------------------------------------------------------
 
 
