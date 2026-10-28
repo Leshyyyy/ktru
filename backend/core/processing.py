@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 CHUNK_SIZE = 50
 STALE_AFTER = timedelta(minutes=5)
 EXAMPLES_OVERLAP = timedelta(minutes=1)  # см. ExampleFeed
+COLUMN_SEPARATOR = "; "
 ACTIVE_STATUSES = ("queued", "parsing", "processing")
 JOB_ERROR_CODES = ("file_unreadable", "mapping_invalid", "limit_exceeded", "internal_error")
 NOTHING_PROCESSED = "Не удалось обработать ни одной позиции. Повторите обработку позже."
@@ -165,7 +166,9 @@ def enqueue_chunks(queue: TaskQueue, job_id: uuid.UUID, item_ids: Sequence[str])
 
 
 def raw_columns(mapping: dict[str, Any], raw_row: Sequence[Any]) -> dict[str, str]:
-    """RawItem.columns: значения по ролям колонок; несколько description или characteristics — слева направо."""
+    """RawItem.columns: значения по ролям колонок; несколько description или characteristics — слева направо
+    через «; », чтобы ML видел границу между колонками («15.6"; Core i5», а не «15.6" Core i5»).
+    """
     parts: dict[str, list[str]] = {}
     for column in sorted(mapping.get("columns", []), key=lambda c: c["index"]):
         role, index = column["role"], column["index"]
@@ -173,7 +176,7 @@ def raw_columns(mapping: dict[str, Any], raw_row: Sequence[Any]) -> dict[str, st
             continue
         if value := str(raw_row[index] or "").strip():
             parts.setdefault(role, []).append(value)
-    return {role: " ".join(values) for role, values in parts.items()}
+    return {role: COLUMN_SEPARATOR.join(values) for role, values in parts.items()}
 
 
 class ExampleFeed:

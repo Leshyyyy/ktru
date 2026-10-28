@@ -20,7 +20,7 @@ from backend.core.catalog import CatalogImportError, import_catalog_file
 from backend.core.db import make_engine
 from backend.core.models import Base, CatalogItem, CatalogVersion
 from backend.core.readiness import write_status
-from backend.core.settings import REPO_ROOT, Settings
+from backend.core.settings import FIXTURE_CATALOG, REPO_ROOT, Settings
 
 from .conftest import FakeRedis
 
@@ -202,9 +202,47 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
     engine.dispose()
 
 
-def test_seed_fails_clearly_without_catalog_file(db_settings: Settings, tmp_path: Path) -> None:
-    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": tmp_path / "missing.jsonl"})
-    assert migrate.main(real) == 1
+def _catalog_versions(settings: Settings) -> list[tuple[str, int]]:
+    engine = _engine(settings.app_database_url())
+    with Session(engine) as session:
+        rows = session.execute(
+            select(CatalogVersion.source, CatalogVersion.items_count).order_by(CatalogVersion.loaded_at)
+        ).all()
+    engine.dispose()
+    return [tuple(r) for r in rows]
+
+
+def test_real_pipeline_downloads_missing_catalog(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog" / "catalog.jsonl"
+    calls: list[Path] = []
+
+    def download(target: Path) -> bool:
+        calls.append(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(FIXTURE_CATALOG.read_bytes())
+        return True
+
+    monkeypatch.setattr(migrate, "download_catalog", download)
+    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": path})
+    assert migrate.main(real) == 0
+    assert migrate.main(real) == 0  # файл уже на томе — второй раз не скачиваем
+    assert calls == [path]
+    assert _catalog_versions(db_settings) == [("migrate:catalog.jsonl", 8)]
+
+
+def test_catalog_download_failure_falls_back_to_stub(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(migrate, "download_catalog", lambda target: False)
+    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": tmp_path / "catalog.jsonl"})
+    assert migrate.main(real) == 0  # система запускается на заглушке, а не падает
+    assert _catalog_versions(db_settings) == [("migrate:fake_catalog.jsonl", 8)]
+
+
+def test_real_pipeline_without_catalog_path_is_config_error(db_settings: Settings) -> None:
+    assert migrate.main(db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": None})) == 1
 
 
 def test_health_reads_catalog_from_database(db_settings: Settings, fake_redis: FakeRedis) -> None:

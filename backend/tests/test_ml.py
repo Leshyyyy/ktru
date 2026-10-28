@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from backend.core import ml as ml_adapter
-from backend.core.ml import check_results, describe_mode, load_pipeline, pipeline_mode
+from backend.core.ml import (
+    CATALOG_FALLBACK,
+    catalog_fallback,
+    check_results,
+    describe_mode,
+    load_pipeline,
+    pipeline_mode,
+)
 from backend.core.settings import Settings
 from contracts.ml_contracts import ClassificationResult, Prediction, RawItem
 from contracts.stub_pipeline import FAKE_CATALOG, StubPipeline
@@ -150,3 +159,13 @@ def test_describe_mode_reports_reranker_fallbacks(monkeypatch: pytest.MonkeyPatc
     assert describe_mode(real, {})["reranker"] == "none"
     monkeypatch.setattr(ml_adapter, "_installed", lambda module: True)
     assert describe_mode(real, {"RERANKER": "llm"})["reranker"] == "none"
+
+
+def test_catalog_fallback(tmp_path: Path) -> None:
+    """Откат на заглушку — только в режиме real и только когда файла каталога нет (migrate его не скачал)."""
+    path = tmp_path / "catalog.jsonl"
+    real = Settings(pipeline="real", ktru_catalog_path=path)
+    assert catalog_fallback(real) == CATALOG_FALLBACK
+    assert catalog_fallback(Settings(pipeline="stub", ktru_catalog_path=path)) is None
+    path.write_text("{}\n", encoding="utf-8")
+    assert catalog_fallback(real) is None

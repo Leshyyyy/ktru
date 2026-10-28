@@ -14,8 +14,8 @@
 | `app/health.py` | проверки для `/health`: база, Redis, готовность worker-ml, каталог |
 | `core/settings.py` | все переменные окружения (`Settings`); список с пояснениями — `.env.example` |
 | `core/models.py` | SQLAlchemy-модели таблиц `schema.sql` (схему создают миграции, не модели) |
-| `core/catalog.py` | импорт каталога из JSONL (`CatalogRow`) — для migrate и будущего `POST /catalog/import` |
-| `core/ml.py` | `load_pipeline()` (stub/real), `pipeline_mode()` / `describe_mode()` — режим для `/config` (у конвейера, иначе по переменным), `check_results()` — проверка ответа ML по контракту |
+| `core/catalog.py` | импорт каталога из JSONL (`CatalogRow`) — для migrate и будущего `POST /catalog/import`; `download_catalog` — полный КТРУ через `ml.fetch_catalog` |
+| `core/ml.py` | `load_pipeline()` (stub/real), `catalog_fallback()` — откат на заглушку без каталога, `pipeline_mode()` / `describe_mode()` — режим для `/config` (у конвейера, иначе по переменным), `check_results()` — проверка ответа ML по контракту |
 | `core/readiness.py` | готовность worker-ml в Redis (heartbeat с TTL) |
 | `core/uploads.py` | хранилище файлов на томе uploads (`<file_id>.<расширение>`), очистка имени, ошибки `backend/files` → код и текст для человека |
 | `core/queue.py` | постановка задач по имени (`io.parse_file`, `ml.process_chunk`); в тестах — `FakeQueue` из `tests/conftest.py` |
@@ -24,7 +24,8 @@
 | `tasks/jobs.py`, `tasks/watchdog.py` | задачи io: `io.parse_file`, `io.watchdog`; логика — в `core/processing.py` |
 | `tasks/ml_worker.py` | вход worker-ml: загрузка конвейера, готовность, `ml.process_chunk` с ретраями 5/20/60 с |
 | `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`) |
-| `migrate.py` | контейнер migrate: миграции → роль приложения → стартовый каталог |
+| `migrate.py` | контейнер migrate: миграции → роль приложения → каталог (в режиме real скачивает его на том `catalog`, не вышло — заглушка) |
+| `Dockerfile` | два образа: по умолчанию `ktru-backend` (api, worker-io, beat, migrate), `--target ml` — `ktru-backend-ml` для worker-ml (torch CPU, `requirements-ml.txt`, модель e5-small из `fetch_embedder.py`) |
 
 ## Команды (из корня репозитория)
 
@@ -38,14 +39,15 @@ TEST_DATABASE_URL=postgresql+psycopg://ktru_test:ktru_test@127.0.0.1:55432/ktru_
 docker compose up --build                           # всё на заглушке; http://127.0.0.1:8000/api/v1/health
 ```
 
-Зависимости меняются только в `requirements*.in`, затем lock пересобирается (с хешами для всех платформ):
+Зависимости меняются только в `requirements*.in`, затем lock пересобирается (с хешами для всех платформ; torch — CPU-сборка из индекса PyTorch):
 
 ```bash
 cd backend && uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements.txt \
-  && uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt
+  && uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt \
+  && uv pip compile requirements-ml.in --universal --python-version 3.12 --generate-hashes --no-header --torch-backend cpu -o requirements-ml.txt
 ```
 
-Режим `PIPELINE=real` локально: смонтируйте каталог в migrate и worker-ml через `docker-compose.override.yml` (он в `.gitignore`):
+`PIPELINE=real` — режим по умолчанию в compose: migrate при первом запуске скачивает полный КТРУ на том `catalog` (`/data/catalog/catalog.jsonl`), worker-ml читает его оттуда. Не скачался — оба работают на заглушке, причина — в `/health` (`components.models.detail`). Чтобы скачать заново, удалите том: `docker volume rm ktru_catalog`. `PIPELINE=stub` — заглушка без скачивания. Свой файл каталога можно смонтировать в migrate и worker-ml через `docker-compose.override.yml` (он в `.gitignore`):
 
 ```yaml
 services:
@@ -63,7 +65,7 @@ services:
 - Ошибки — только `raise ApiError(...)` (или `not_found`, `invalid_state`, `not_ready`); `HTTPException` не бросаем. `message` — по-русски, для человека, без внутренних подробностей.
 - Эндпоинты синхронные (`def`), один драйвер psycopg 3 — и в API, и в воркерах.
 - Схема меняется только новой ревизией Alembic вместе с PR в `contracts/schema.sql`; тест `test_migrations_match_contract` сверяет их.
-- Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каждый ответ ML проходит `check_results()`. Методы конвейера сверх контракта (`add_examples`, `describe_mode`) вызываются только через `getattr`: у заглушки их нет.
+- Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каталог migrate скачивает отдельным процессом `python -m ml.fetch_catalog`. Каждый ответ ML проходит `check_results()`. Методы конвейера сверх контракта (`add_examples`, `describe_mode`) вызываются только через `getattr`: у заглушки их нет.
 - Аргументы задач Celery — только JSON-типы (id, строки); воркер меняет позиции только `WHERE status = 'pending'`.
 - Переход статуса задачи — один `UPDATE ... WHERE status IN (...)`: повторная доставка, гонка двух воркеров, отмена и удаление посреди работы не должны ломать состояние (тесты — `tests/test_processing.py`).
 - Решения только добавляются в `decisions`; итоговый код — `v_item_final`. Ручное решение (`via = manual`) пишет пример в `confirmed_examples` (upsert по `source_item_id`, `norm_text` — только `normalize_text`), массовое (`via = bulk`) — нет. Повтор того же ручного решения не создаёт новой строки.

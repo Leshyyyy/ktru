@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError
 from backend.app import deps
 from backend.app.health import HealthChecker
 from backend.app.main import create_app
+from backend.core.ml import CATALOG_FALLBACK
 from backend.core.readiness import write_status
 from backend.core.settings import Settings
 
@@ -102,6 +103,14 @@ def test_health_models_not_ready(fake_redis: FakeRedis, status: dict[str, Any], 
     result = _check(FakeEngine(_catalog()), fake_redis)
     assert result["ready"] is False
     assert result["components"]["models"] == {"ok": False, "detail": detail}
+
+
+def test_health_explains_catalog_fallback(fake_redis: FakeRedis) -> None:
+    """Каталог не скачался — система работает на заглушке, а /health говорит почему (без правки контракта)."""
+    write_status(fake_redis, {**STUB_STATUS, "fallback": CATALOG_FALLBACK}, 30)
+    result = _check(FakeEngine(_catalog()), fake_redis)
+    assert result["ready"] is True
+    assert result["components"]["models"] == {"ok": True, "detail": CATALOG_FALLBACK}
 
 
 def test_health_ml_catalog_not_loaded(fake_redis: FakeRedis) -> None:

@@ -73,11 +73,17 @@ jobs:
         run: pytest backend/files/tests
       - name: Известные уязвимости в зависимостях
         run: pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r backend/requirements-dev.txt
+      - name: Известные уязвимости в зависимостях worker-ml
+        # torch==X+cpu нет на PyPI, и pip-audit его не находит; уязвимости у CPU-сборки те же, что у версии X.
+        run: |
+          sed 's/==\([0-9.]*\)+cpu /==\1 /' backend/requirements-ml.txt > "$RUNNER_TEMP/requirements-ml-audit.txt"
+          pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r "$RUNNER_TEMP/requirements-ml-audit.txt"
 
   compose:
     name: docker compose up
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Первая сборка с torch и моделью, скачивание каталога и расчёт его эмбеддингов — как у проверяющего.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,7 +92,7 @@ jobs:
         run: docker compose up -d --build
       - name: Ждём готовности (/api/v1/health → ready)
         run: |
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 180); do
             if curl -fsS http://127.0.0.1:8000/api/v1/health \
               | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin)["ready"] else 1)'; then
               curl -fsS http://127.0.0.1:8000/api/v1/config
@@ -96,6 +102,13 @@ jobs:
           done
           curl -sS http://127.0.0.1:8000/api/v1/health || true
           exit 1
+      - name: Настоящий ML, а не откат на заглушку
+        # Откат (каталог не скачался) пишет причину в components.models.detail; у настоящего конвейера detail пуст.
+        run: |
+          curl -fsS http://127.0.0.1:8000/api/v1/health | python3 -c '
+          import json, sys
+          models = json.load(sys.stdin)["components"]["models"]
+          sys.exit(f"worker-ml работает не на настоящем ML: {models}" if models.get("detail") else 0)'
       - name: Интерфейс и API через nginx (сервис frontend, :8080)
         run: |
           for _ in $(seq 1 24); do

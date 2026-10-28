@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
+from backend.core.ml import CATALOG_FALLBACK
 from backend.core.readiness import READY_KEY, Heartbeat, read_status, write_status
+from backend.tasks import ml_worker
 from backend.tasks.celery_app import app
 from backend.tasks.ml_worker import _payload
 
@@ -68,3 +72,11 @@ def test_payload_without_pipeline_is_not_ready() -> None:
     assert status["models"] is False
     assert status["catalog"] is False
     assert status["mode"] == {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False}
+
+
+def test_payload_reports_catalog_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PIPELINE=real без каталога: воркер работает как заглушка и сообщает причину для /health."""
+    monkeypatch.setattr(ml_worker, "settings", ml_worker.settings.model_copy(update={"pipeline": "real"}))
+    monkeypatch.setitem(ml_worker._state, "fallback", CATALOG_FALLBACK)
+    status = _payload()
+    assert (status["pipeline"], status["fallback"]) == ("stub", CATALOG_FALLBACK)

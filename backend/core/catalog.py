@@ -2,12 +2,17 @@
 выбор версии для новых задач.
 
 Импортом будет работать POST /catalog/import (FR-8.1); сейчас его вызывает migrate для стартового каталога.
+Файл полного каталога для PIPELINE=real migrate скачивает сам (download_catalog), если его ещё нет на томе.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
+import subprocess
+import sys
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,7 +27,10 @@ from contracts.ml_contracts import CatalogRow
 
 from .models import CatalogItem, CatalogVersion
 
+log = logging.getLogger(__name__)
+
 BATCH_SIZE = 500
+DOWNLOAD_TIMEOUT_S = 900
 _UPDATABLE = ("okpd2_code", "name", "description", "unit", "status", "replaced_by", "characteristics", "search_text")
 
 
@@ -65,6 +73,25 @@ def read_rows(path: Path) -> Iterator[CatalogRow]:
                 fields = ", ".join(".".join(str(p) for p in err["loc"]) or "строка" for err in e.errors())
                 message = f"Строка {number}: не соответствует формату CatalogRow (поля: {fields})."
                 raise CatalogImportError(message) from e
+
+
+def download_catalog(path: Path, timeout_s: float = DOWNLOAD_TIMEOUT_S) -> bool:
+    """Полный КТРУ через `python -m ml.fetch_catalog`: ревизия датасета и sha256 закреплены у ML.
+
+    Пишет во временный файл рядом и переименовывает: оборванная загрузка не оставит «готовый» каталог.
+    Отдельный процесс — чтобы не тянуть код ML в migrate и ограничить время. → удалось ли.
+    """
+    part = path.with_name(path.name + ".part")
+    command = [sys.executable, "-m", "ml.fetch_catalog", "--out", str(part)]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(command, check=True, timeout=timeout_s)  # noqa: S603 — фиксированная команда
+        os.replace(part, path)
+    except (OSError, subprocess.SubprocessError):
+        log.exception("Не удалось скачать каталог КТРУ", extra={"path": str(path)})
+        part.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def latest_ready_version(session: Session) -> uuid.UUID | None:

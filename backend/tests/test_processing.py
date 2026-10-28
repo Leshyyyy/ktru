@@ -39,7 +39,7 @@ def test_raw_columns_by_roles() -> None:
     }
     assert processing.raw_columns(mapping, ["Стол", "120 см", "x", " дуб ", ""]) == {
         "name": "Стол",
-        "characteristics": "120 см дуб",
+        "characteristics": "120 см; дуб",
     }
 
 
