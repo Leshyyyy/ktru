@@ -42,8 +42,8 @@ from .retrieve import MemoryRetriever
 
 log = logging.getLogger(__name__)
 
-W_RETRIEVAL = 0.45
-W_CHARS = 0.55
+W_RETRIEVAL = 0.55
+W_CHARS = 0.45  # на ste_dev / v3 dev 0,45 не хуже 0,55 и на 1 п. лучше на строках с характеристиками
 KEEP = 5  # сколько кандидатов держим после сверки (для признаков и калибровки)
 
 

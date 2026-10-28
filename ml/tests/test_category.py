@@ -81,3 +81,16 @@ def test_yes_from_bare_mention_is_weak_evidence():
     strong = matcher.match_entry(entry, build_query_context("Стерилизатор, принтер: да")).score
     assert 0.5 < weak < strong
 
+
+
+def test_exact_ktru_name_weakens_wrong_category(monkeypatch):
+    import ml.retrieve as retrieve
+
+    # Модель категорий уверенно ошибается (ноутбуки), её вес большой. Строка, которая начинается с точного
+    # наименования позиции КТРУ, получает малый вес категории — ответ из текста КТРУ; без совпадения — нет.
+    monkeypatch.setattr(retrieve, "W_CAT", 0.9)
+    pipe = make_pipeline([entry_from_row(r) for r in SYNTH_ROWS], FixedCategories({"77.77.01.000": 1.0}))
+    assert pipe.retriever._starts_with_name("Бумага для офисной техники, формат А4")
+    assert not pipe.retriever._starts_with_name("Офисная бумага, формат А4")
+    assert _run(pipe, "Бумага для офисной техники, формат А4").predictions[0].ktru_code == "77.77.03.000-00000004"
+    assert _run(pipe, "Офисная бумага, формат А4").predictions[0].okpd2_code == "77.77.01.000"

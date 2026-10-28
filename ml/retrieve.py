@@ -22,7 +22,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from contracts.ml_contracts import Candidate, SearchQuery, normalize_text
 
 from .catalog import Catalog, CatalogEntry
-from .category import query_text
+from .category import norm_name, query_text
 from .charmatch import CharMatcher, build_query_context
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ CAT_MASS = 0.95
 W_CAT = 0.4
 CAT_POWER = 1.0
 FALLBACK_N = 15
+# Строка начинается с точного наименования позиции КТРУ (не короче EXACT_MIN_LEN символов) — текст КТРУ здесь
+# надёжнее карточек поставщиков, вес категории меньше. Так в разметке v3 (82% строк) и в 12% живых названий.
+EXACT_W_CAT = 0.15
+EXACT_MIN_LEN = 12
 
 
 class MemoryRetriever:
@@ -82,6 +86,7 @@ class MemoryRetriever:
         # Подтверждённые пользователями пары «нормализованный текст → код» (кэш точных совпадений).
         self.examples: dict[str, str] = {}
         self._index = {e.ktru_code: i for i, e in enumerate(self.items)}
+        self._norm_names = {n for n in (norm_name(x) for x in self.uniq_names) if len(n) >= EXACT_MIN_LEN}
 
     def add_examples(self, pairs: dict[str, str]) -> None:
         self.examples.update({normalize_text(t): code for t, code in pairs.items()})
@@ -143,7 +148,7 @@ class MemoryRetriever:
         out = []
         for i, q in enumerate(queries):
             probs = categories[i] if categories else None
-            row, pool = self._pool(fused[i], probs)
+            row, pool = self._pool(fused[i], probs, EXACT_W_CAT if self._starts_with_name(q.text) else W_CAT)
             qctx = build_query_context(q.text)
             # Предварительный порядок: поиск + обязательные характеристики (без них не различить одноимённые позиции).
             prelim = []
@@ -158,7 +163,12 @@ class MemoryRetriever:
             out.append([self._candidate(j, vec[i, j], name[i, j], row[j]) for j in chosen])
         return out
 
-    def _pool(self, fused: np.ndarray, probs: Optional[dict[str, float]]) -> tuple[np.ndarray, np.ndarray]:
+    def _starts_with_name(self, text: str) -> bool:
+        tokens = norm_name(text).split()
+        return any(" ".join(tokens[:k]) in self._norm_names for k in range(1, min(len(tokens), 15) + 1))
+
+    def _pool(self, fused: np.ndarray, probs: Optional[dict[str, float]],
+              w_cat: float = W_CAT) -> tuple[np.ndarray, np.ndarray]:
         """→ (оценка с учётом категории, индексы предварительного отбора по убыванию оценки)."""
         cats, mass = [], 0.0
         for code, p in (probs or {}).items():  # доли уже по убыванию
@@ -170,10 +180,10 @@ class MemoryRetriever:
         if not cats:  # модели категорий нет или она не знает ни одной категории каталога — поиск по всему каталогу
             pool = np.flatnonzero(fused >= fused.max() - PREFILTER_GAP)
             return fused, pool[np.argsort(-fused[pool])][:PREFILTER_MAX]
-        row = (1 - W_CAT) * fused
+        row = (1 - w_cat) * fused
         inside = np.concatenate([self.by_okpd[c] for c in cats])
         for c in cats:
-            row[self.by_okpd[c]] += W_CAT * probs[c] ** CAT_POWER
+            row[self.by_okpd[c]] += w_cat * probs[c] ** CAT_POWER
         inside = inside[row[inside] >= row[inside].max() - PREFILTER_GAP]
         inside = inside[np.argsort(-row[inside])][:PREFILTER_MAX]
         k = min(FALLBACK_N + len(inside), len(row) - 1)
