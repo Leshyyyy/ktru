@@ -1,5 +1,8 @@
 # AI-классификатор КТРУ. Запуск: docker compose up --build (CPU, без ключей LLM).
 # Интерфейс — http://localhost:8080 (он же проксирует /api/), API напрямую — http://localhost:8000/api/v1.
+# По умолчанию настоящий ML (PIPELINE=real): migrate при первом запуске скачивает полный каталог КТРУ на том
+# catalog, образ worker-ml содержит torch (CPU) и модель эмбеддингов. Не скачался каталог — работает заглушка,
+# причина видна в /api/v1/health. PIPELINE=stub — заглушка сразу, без каталога (для фронтенда и бэкенда).
 #
 # Все переменные и значения по умолчанию — в .env.example; свои значения кладите в .env.
 # Пароли по умолчанию — только для локального запуска: PostgreSQL и Redis сидят во внутренней сети
@@ -112,12 +115,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ktru_owner_local_only}
       APP_DB_USER: ${APP_DB_USER:-ktru_app}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-ktru_app_local_only}
-      PIPELINE: ${PIPELINE:-stub}
-      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      PIPELINE: ${PIPELINE:-real}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-/data/catalog/catalog.jsonl}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - catalog:/data/catalog
     depends_on:
       postgres:
         condition: service_healthy
+    # public — скачать каталог КТРУ при первом запуске (Hugging Face, ревизия и sha256 закреплены).
+    networks: [internal, public]
 
   api:
     <<: *backend
@@ -133,7 +140,7 @@ services:
       - --no-access-log
     environment:
       <<: [*db-app-env, *redis-env]
-      PIPELINE: ${PIPELINE:-stub}
+      PIPELINE: ${PIPELINE:-real}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Без значения: берутся из .env или окружения, если заданы, иначе действуют умолчания из .env.example.
       API_DOCS:
@@ -206,6 +213,12 @@ services:
 
   worker-ml:
     <<: *backend
+    # Отдельный образ: torch (CPU) и модель эмбеддингов нужны только здесь, остальные сервисы остаются лёгкими.
+    image: ktru-backend-ml:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ml
     command:
       - celery
       - -A
@@ -221,9 +234,9 @@ services:
       - --without-mingle
     environment:
       <<: [*db-app-env, *redis-env]
-      PIPELINE: ${PIPELINE:-stub}
+      PIPELINE: ${PIPELINE:-real}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-/data/catalog/catalog.jsonl}
       HF_HOME: /data/models
       ML_HEARTBEAT_INTERVAL_S:
       ML_READY_TTL_S:
@@ -241,12 +254,19 @@ services:
       LLM_MODEL:
       LLM_API_KEY:
       JEV_MODEL:
-      EMBEDDER_MODEL:
+      # Модель лежит в образе (стадия ml в backend/Dockerfile); «-» — выключить эмбеддинги.
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-/opt/models/multilingual-e5-small}
       EMBEDDING_DIM:
       CROSS_ENCODER_MODEL:
       CALIBRATOR_PATH:
+      # Кэши ML — на томе models: код в образе только для чтения.
+      EMBED_CACHE_DIR: /data/models/embeddings
+      LLM_CACHE_PATH: /data/models/llm_cache.jsonl
     volumes:
       - models:/data/models
+      - catalog:/data/catalog:ro
+    # Полный каталог, модель категорий, torch и e5-small — около 2 ГБ; запас на пачку позиций.
+    mem_limit: 3g
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"ml@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
@@ -314,6 +334,7 @@ volumes:
   redisdata:
   uploads:
   models:
+  catalog:
 
 networks:
   # Без выхода наружу: сюда подключены база и Redis.

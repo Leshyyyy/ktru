@@ -1,0 +1,7 @@
+# Образ worker-ml (стадия ml в backend/Dockerfile): всё из requirements.in плюс эмбеддер ML.
+# torch — CPU-сборка из download.pytorch.org (обычная с PyPI тянет CUDA на 2+ ГБ); версии общих пакетов
+# совпадают с requirements.txt (-c). Lock пересобирается командой из backend/CLAUDE.md.
+-r requirements.in
+-c requirements.txt
+torch>=2.6
+sentence-transformers>=3,<6

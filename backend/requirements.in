@@ -25,3 +25,5 @@ scikit-learn
 rapidfuzz
 joblib
 httpx
+# Каталог КТРУ для PIPELINE=real скачивает migrate (ml.fetch_catalog читает parquet).
+pyarrow

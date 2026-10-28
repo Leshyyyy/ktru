@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from backend.core.settings import REPO_ROOT
 
 BACKEND = REPO_ROOT / "backend"
@@ -37,7 +39,11 @@ def _locked(path: Path) -> dict[str, str]:
 
 
 def test_lock_contains_every_requested_package() -> None:
-    for source, lock in (("requirements.in", "requirements.txt"), ("requirements-dev.in", "requirements-dev.txt")):
+    for source, lock in (
+        ("requirements.in", "requirements.txt"),
+        ("requirements-dev.in", "requirements-dev.txt"),
+        ("requirements-ml.in", "requirements-ml.txt"),
+    ):
         missing = sorted(_requested(BACKEND / source) - set(_locked(BACKEND / lock)))
         assert not missing, f"{lock} отстал от {source}, пересоберите lock: {missing}"
 
@@ -58,8 +64,17 @@ def test_files_dependencies_are_in_backend_image() -> None:
     assert not missing, f"Добавьте в backend/requirements.in и пересоберите lock: {missing}"
 
 
-def test_dev_lock_pins_the_same_runtime_versions() -> None:
-    """CI тестирует ровно те версии, что попадут в образ."""
-    runtime, dev = _locked(BACKEND / "requirements.txt"), _locked(BACKEND / "requirements-dev.txt")
-    differ = {name: (version, dev.get(name)) for name, version in runtime.items() if dev.get(name) != version}
-    assert not differ, f"Версии в requirements-dev.txt расходятся с requirements.txt: {differ}"
+@pytest.mark.parametrize("lock", ["requirements-dev.txt", "requirements-ml.txt"])
+def test_locks_pin_the_same_runtime_versions(lock: str) -> None:
+    """CI тестирует ровно те версии, что попадут в образы; worker-ml работает на тех же версиях, что api."""
+    runtime, other = _locked(BACKEND / "requirements.txt"), _locked(BACKEND / lock)
+    differ = {name: (version, other.get(name)) for name, version in runtime.items() if other.get(name) != version}
+    assert not differ, f"Версии в {lock} расходятся с requirements.txt: {differ}"
+
+
+def test_ml_lock_has_cpu_torch_only() -> None:
+    """Обычный torch с PyPI под Linux тянет библиотеки CUDA на 2+ ГБ — в образе worker-ml только CPU-сборка."""
+    text = (BACKEND / "requirements-ml.txt").read_text(encoding="utf-8")
+    assert re.search(r"^torch==[^\s;]+\+cpu ", text, re.M), "torch должен быть CPU-сборкой (--torch-backend cpu)"
+    gpu = sorted({n for n in _locked(BACKEND / "requirements-ml.txt") if n.startswith(("nvidia-", "triton"))})
+    assert not gpu, f"В lock worker-ml попали пакеты CUDA: {gpu}"

@@ -93,6 +93,8 @@ def _models(ml_status: dict[str, Any] | None, *, redis_ok: bool) -> ComponentHea
         return ComponentHealth(ok=False, detail=str(error))
     if not ml_status.get("models", False):
         return ComponentHealth(ok=False, detail="Модели ещё загружаются.")
+    if fallback := ml_status.get("fallback"):
+        return ComponentHealth(ok=True, detail=str(fallback))
     if ml_status.get("pipeline") == "stub":
         return ComponentHealth(ok=True, detail="Заглушка StubPipeline (PIPELINE=stub), коды 99.99.*.")
     return ComponentHealth(ok=True)

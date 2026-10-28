@@ -17,9 +17,10 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.core.catalog import CatalogImportError, file_sha256, import_catalog_file
+from backend.core.catalog import CatalogImportError, download_catalog, file_sha256, import_catalog_file
 from backend.core.db import make_engine
 from backend.core.logs import setup_logging
+from backend.core.ml import catalog_fallback
 from backend.core.models import CatalogVersion
 from backend.core.settings import ConfigError, Settings, get_settings
 
@@ -41,7 +42,7 @@ def main(settings: Settings | None = None) -> int:
             try:
                 upgrade(engine)
                 ensure_app_role(engine, settings)
-                seed_catalog(engine, settings)
+                seed_catalog(engine, prepare_catalog(settings))
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY})
     except (ConfigError, CatalogImportError) as e:
@@ -112,6 +113,23 @@ def ensure_app_role(engine: Engine, settings: Settings) -> None:
                 sql.SQL(statement).format(db=sql.Identifier(settings.postgres_db), role=ident, owner=owner_ident)
             )
     log.info("Роль приложения в БД настроена", extra={"role": role, "action": verb.lower()})
+
+
+def prepare_catalog(settings: Settings) -> Settings:
+    """PIPELINE=real: полного каталога ещё нет на томе — скачать его. Не вышло (нет сети, Hugging Face недоступен,
+    не совпал sha256) — откат на заглушку: система запускается, а /health объясняет, почему коды 99.99.*.
+    """
+    if settings.pipeline != "real":
+        return settings
+    if settings.ktru_catalog_path is None:
+        raise ConfigError("PIPELINE=real: задайте KTRU_CATALOG_PATH — тот же файл читает worker-ml")
+    if not settings.ktru_catalog_path.is_file():
+        log.info("Скачиваю каталог КТРУ", extra={"path": str(settings.ktru_catalog_path)})
+        download_catalog(settings.ktru_catalog_path)
+    if reason := catalog_fallback(settings):
+        log.error(reason)
+        return settings.model_copy(update={"pipeline": "stub"})
+    return settings
 
 
 def seed_catalog(engine: Engine, settings: Settings) -> None:

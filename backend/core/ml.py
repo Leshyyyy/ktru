@@ -27,6 +27,23 @@ _RERANKERS = ("none", "cross_encoder", "llm")
 _DEVICES = ("cpu", "cuda")
 
 
+CATALOG_FALLBACK = (
+    "Каталог КТРУ не скачался — работает демонстрационная заглушка с кодами 99.99.*. "
+    "Проверьте доступ к huggingface.co и запустите заново: docker compose up."
+)
+
+
+def catalog_fallback(settings: Settings) -> str | None:
+    """PIPELINE=real, а файла каталога нет (migrate не смог его скачать) → причина отката на заглушку.
+
+    migrate и worker-ml решают по одному признаку — есть ли файл KTRU_CATALOG_PATH, — поэтому оба откатываются
+    вместе: migrate загружает каталог-фикстуру, worker-ml отвечает её кодами.
+    """
+    if settings.pipeline != "real" or settings.ktru_catalog_path is None:
+        return None
+    return None if settings.ktru_catalog_path.is_file() else CATALOG_FALLBACK
+
+
 def load_pipeline(settings: Settings) -> Pipeline:
     """Загружает модели. Вызывать один раз на процесс воркера: это может занять минуты."""
     # Импорт внутри функции: ml.pipeline тянет numpy и scikit-learn, а нужен только worker-ml.
