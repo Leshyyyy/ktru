@@ -17,10 +17,10 @@ import {
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconDots, IconFileUpload, IconPlayerStop, IconTrash } from "@tabler/icons-react";
+import { IconDots, IconFileUpload, IconListCheck, IconPlayerStop, IconTrash } from "@tabler/icons-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { isActive, useCancelJob, useDeleteJob, useJobs } from "../api/hooks";
+import { isActive, useCancelJob, useDeleteJob, useItems, useJobs } from "../api/hooks";
 import type { Job } from "../api/types";
 import { JobStatusBadge } from "../components/badges";
 import { dateTime, plural } from "../lib/format";
@@ -48,13 +48,14 @@ export function JobsPage() {
 
       <Card p={0}>
         <ScrollArea type="auto">
-          <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="lg" miw={760}>
+          <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="lg" miw={900}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Файл</Table.Th>
                 <Table.Th w={170}>Статус</Table.Th>
                 <Table.Th w={220}>Прогресс</Table.Th>
                 <Table.Th w={150}>Создана</Table.Th>
+                <Table.Th w={170} />
                 <Table.Th w={50} />
               </Table.Tr>
             </Table.Thead>
@@ -62,7 +63,7 @@ export function JobsPage() {
               {isLoading &&
                 Array.from({ length: 3 }).map((_, i) => (
                   <Table.Tr key={i}>
-                    <Table.Td colSpan={5}>
+                    <Table.Td colSpan={6}>
                       <Skeleton h={22} />
                     </Table.Td>
                   </Table.Tr>
@@ -89,6 +90,9 @@ export function JobsPage() {
                     <Text size="sm" className="tabular">
                       {dateTime(job.created_at)}
                     </Text>
+                  </Table.Td>
+                  <Table.Td onClick={(e) => e.stopPropagation()}>
+                    <NextStep job={job} />
                   </Table.Td>
                   <Table.Td onClick={(e) => e.stopPropagation()}>
                     <JobMenu job={job} />
@@ -137,6 +141,28 @@ function JobProgress({ job }: { job: Job }) {
           ` · ${job.summary.green ?? 0} зел. / ${job.summary.yellow ?? 0} жёлт. / ${job.summary.red ?? 0} красн.`}
       </Text>
     </Stack>
+  );
+}
+
+/** Следующий шаг по задаче: проверить спорные позиции, если они есть, иначе — просто открыть результат. */
+function NextStep({ job }: { job: Job }) {
+  const disputed = useItems(job.job_id, { status: "needs_review", page: 1, page_size: 1 }).data?.total ?? 0;
+  if (disputed > 0)
+    return (
+      <Button
+        component={Link}
+        to={`/jobs/${job.job_id}?status=needs_review&open=first`}
+        variant="light"
+        size="xs"
+        leftSection={<IconListCheck size={14} />}
+      >
+        Проверить · {disputed}
+      </Button>
+    );
+  return (
+    <Button component={Link} to={`/jobs/${job.job_id}`} variant="subtle" size="xs" color="gray">
+      Открыть
+    </Button>
   );
 }
 

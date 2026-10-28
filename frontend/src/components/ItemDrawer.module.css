@@ -156,6 +156,17 @@
   }
 }
 
+/* Подсказка над вариантами неуверенной позиции: цвет зоны «красная», рядом всегда слова. */
+.unsure {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--k-lo-bg);
+  color: var(--k-ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .link {
   color: var(--k-primary);
   font-weight: 600;

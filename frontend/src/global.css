@@ -43,6 +43,8 @@ body {
 }
 .row-clickable {
   cursor: pointer;
+  /* Прокрутка к выбранной строке не прячет её под шапкой приложения (60 px) и уведомлением снизу. */
+  scroll-margin: 76px 0 72px;
 }
 .row-selected td {
   background: #f2faf7;

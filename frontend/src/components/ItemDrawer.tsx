@@ -1,7 +1,11 @@
 /**
  * Карточка позиции — экраны 5 «Карточка позиции» и 6 «Ручная правка» из docs/team.
- * Панель 580 px справа поверх таблицы; таблица остаётся рабочей, выбранная строка подсвечена.
- * Клавиши: J/↓ и K/↑ — соседние строки, 1–3 — выбрать вариант, Enter — подтвердить выбранный.
+ * Панель 580 px справа; на широком экране таблица сдвигается влево и остаётся видна целиком (JobPage).
+ * Клавиши: J/↓ и K/↑ — соседние строки, 1–3 — выбрать вариант, Enter — главное действие.
+ *
+ * Главное действие зависит от уверенности. Если у первого варианта она ниже жёлтого порога, система
+ * не уверена: вариант заранее не выбран, а главная кнопка — поиск по каталогу. Так красную позицию нельзя
+ * подтвердить одним Enter не глядя; выбрал вариант сам — главной становится кнопка «Выбрать вариант N».
  */
 import {
   Alert,
@@ -21,10 +25,10 @@ import {
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
 import { IconArrowDown, IconArrowUp, IconCheck, IconSearch, IconX } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCatalogItem, useCatalogSearch, useItem } from "../api/hooks";
 import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
-import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode } from "./badges";
+import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode, useThresholds } from "./badges";
 import { useDecisions, useWithOverlay } from "./DecisionQueue";
 import classes from "./ItemDrawer.module.css";
 
@@ -46,14 +50,23 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
   const withOverlay = useWithOverlay();
   const item = data ? withOverlay(data) : undefined;
   const { decide } = useDecisions();
+  const t = useThresholds();
 
-  // Выбранный вариант: по умолчанию тот, что сейчас итоговый, иначе первый.
+  // Ниже жёлтого порога (или вариантов нет) — система не уверена, первый вариант заранее не выбираем.
+  const topConfidence = item?.predictions[0]?.confidence;
+  const unsure = !!item && (topConfidence == null || topConfidence < t.yellow);
+
+  // Выбранный вариант: тот, что сейчас итоговый; иначе первый, а у неуверенной позиции — никакой (0).
   const [picked, setPicked] = useState(1);
   const [manual, setManual] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const finalRank = item?.predictions.find((p) => p.ktru_code === item.final?.ktru_code)?.rank;
-    setPicked(finalRank ?? 1);
+    const chosenByUser = item?.final?.source === "user";
+    setPicked(chosenByUser ? (finalRank ?? 0) : unsure ? 0 : (finalRank ?? 1));
     setManual(item?.status === "failed");
+    // Следующая позиция открывается сверху, а не на том месте, где прокрутили предыдущую.
+    bodyRef.current?.scrollTo({ top: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, data?.item_id]);
 
@@ -61,6 +74,8 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
   const chosen = item?.predictions.find((p) => p.rank === picked);
   const alreadyFinal = !!chosen && item?.final?.source === "user" && item.final.ktru_code === chosen.ktru_code;
   const canDecide = !!item && !!chosen && !pending && !alreadyFinal;
+  // Главное действие — поиск по каталогу: вариант не выбран, а позиция неуверенная или без вариантов.
+  const searchFirst = !!item && !pending && !chosen && !manual;
 
   const decideVariant = (p: Prediction | undefined = chosen) => {
     if (!item || !p || pending) return;
@@ -68,6 +83,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
     else decide({ kind: "correct", item, code: p.ktru_code, name: p.name, reason: "Выбран вариант модели" });
     onAfterDecision();
   };
+  const pick = (rank: number) => item && item.predictions.length >= rank && setPicked(rank);
 
   useHotkeys(
     itemId
@@ -76,10 +92,10 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
           ["ArrowDown", () => onNext?.()],
           ["k", () => onPrev?.()],
           ["ArrowUp", () => onPrev?.()],
-          ["1", () => setPicked(1)],
-          ["2", () => item && item.predictions.length > 1 && setPicked(2)],
-          ["3", () => item && item.predictions.length > 2 && setPicked(3)],
-          ["Enter", () => canDecide && decideVariant()],
+          ["1", () => pick(1)],
+          ["2", () => pick(2)],
+          ["3", () => pick(3)],
+          ["Enter", () => (canDecide ? decideVariant() : searchFirst && setManual(true))],
         ]
       : [],
   );
@@ -146,7 +162,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
             </Group>
           </div>
 
-          <ScrollArea className={classes.bd} type="auto">
+          <ScrollArea className={classes.bd} type="auto" viewportRef={bodyRef}>
             <Stack gap="lg" p="lg" pt="md">
               {pending && (
                 <Alert color="gray" icon={<Loader size={16} />}>
@@ -172,6 +188,12 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                     <span>Варианты КТРУ</span>
                     <span>уверенность</span>
                   </div>
+                  {unsure && !pending && item.final?.source !== "user" && (
+                    <Text className={classes.unsure}>
+                      Система не уверена. Сравните варианты по характеристикам — выберите подходящий или найдите код в
+                      каталоге.
+                    </Text>
+                  )}
                   <Stack gap={10}>
                     {item.predictions.map((p) => (
                       <Variant key={p.rank} p={p} picked={picked === p.rank} onPick={() => setPicked(p.rank)} />
@@ -180,24 +202,23 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                 </div>
               )}
 
-              {!manual && (
-                <Text size="sm">
-                  <UnstyledButton className={classes.link} onClick={() => setManual(true)} disabled={pending}>
-                    Найти другой код в каталоге
-                  </UnstyledButton>
-                  {item.path && (
-                    <Text span size="sm" c="dimmed">
-                      {" "}
-                      · путь: {item.path === "fast" ? "быстрый" : "реранкер"}
-                    </Text>
-                  )}
-                </Text>
+              {!manual && !searchFirst && (
+                <Button
+                  variant="default"
+                  leftSection={<IconSearch size={16} />}
+                  onClick={() => setManual(true)}
+                  disabled={pending}
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  Найти другой код в каталоге
+                </Button>
               )}
               {manual && (
                 <ManualCode
                   item={item}
                   versionId={job.catalog_version_id}
                   disabled={pending}
+                  primary={!chosen}
                   onSave={(code, name, reason) => {
                     decide({ kind: "correct", item, code, name, reason });
                     onAfterDecision();
@@ -209,29 +230,53 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
           </ScrollArea>
 
           <div className={classes.ft}>
-            <Button
-              size="md"
-              flex={1}
-              disabled={!canDecide}
-              onClick={() => decideVariant()}
-              rightSection={canDecide ? <Kbd size="xs">Enter</Kbd> : undefined}
-            >
-              {pending
-                ? "Позиция ещё обрабатывается"
-                : alreadyFinal
-                  ? `Вариант ${picked} уже выбран`
-                  : !chosen
-                    ? "Нет вариантов — укажите код вручную"
-                    : picked === 1
-                      ? item.status === "confirmed"
-                        ? "Вариант 1 подтверждён"
-                        : "Подтвердить вариант 1"
-                      : `Выбрать вариант ${picked}`}
-            </Button>
-            {second && !pending && (
-              <Button size="md" variant="default" onClick={() => setPicked(second.rank)}>
-                Выбрать вариант {second.rank}
-              </Button>
+            {searchFirst ? (
+              <>
+                <Button
+                  size="md"
+                  flex={1}
+                  leftSection={<IconSearch size={18} />}
+                  onClick={() => setManual(true)}
+                  rightSection={<Kbd size="xs">Enter</Kbd>}
+                >
+                  Найти код в каталоге
+                </Button>
+                {item.predictions.length > 0 && (
+                  <Text size="sm" c="dimmed" maw={170} lh={1.3}>
+                    или выберите вариант выше — клавиши 1–{item.predictions.length}
+                  </Text>
+                )}
+              </>
+            ) : manual && !chosen ? (
+              <Text size="sm" c="dimmed">
+                Выберите код в результатах поиска и сохраните его{" "}
+                {item.predictions.length > 0 && "— или вернитесь к вариантам выше"}.
+              </Text>
+            ) : (
+              <>
+                <Button
+                  size="md"
+                  flex={1}
+                  disabled={!canDecide}
+                  onClick={() => decideVariant()}
+                  rightSection={canDecide ? <Kbd size="xs">Enter</Kbd> : undefined}
+                >
+                  {pending
+                    ? "Позиция ещё обрабатывается"
+                    : alreadyFinal
+                      ? `Вариант ${picked} уже выбран`
+                      : picked === 1
+                        ? item.status === "confirmed"
+                          ? "Вариант 1 подтверждён"
+                          : "Подтвердить вариант 1"
+                        : `Выбрать вариант ${picked}`}
+                </Button>
+                {second && !pending && !unsure && (
+                  <Button size="md" variant="default" onClick={() => setPicked(second.rank)}>
+                    Выбрать вариант {second.rank}
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </>
@@ -323,12 +368,15 @@ function ManualCode({
   item,
   versionId,
   disabled,
+  primary,
   onSave,
   onCancel,
 }: {
   item: Item;
   versionId: string;
   disabled: boolean;
+  /** Сохранение кода — главное действие карточки (вариант не выбран): кнопка заливкой, поле в фокусе. */
+  primary: boolean;
   onSave: (code: string, name: string, reason: string) => void;
   onCancel?: () => void;
 }) {
@@ -359,6 +407,8 @@ function ManualCode({
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
           disabled={disabled}
+          // Поиск открыли сами (кнопкой или Enter) — сразу можно печатать.
+          autoFocus={primary}
         />
         {debounced.trim().length < 2 ? (
           <Text size="sm" c="dimmed">
@@ -415,7 +465,7 @@ function ManualCode({
         />
         <Group justify="flex-end">
           <Button
-            variant="default"
+            variant={primary ? "filled" : "default"}
             disabled={!picked || disabled}
             onClick={() => picked && onSave(picked.ktru_code, picked.name, reason)}
           >
