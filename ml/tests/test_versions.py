@@ -61,3 +61,18 @@ def test_file_catalog_without_version_serves_any_job_version():
     m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker(), category=None)
     m.load_version("", V1)  # как get_pipeline() с KTRU_CATALOG_PATH и без KTRU_CATALOG_VERSION_ID
     assert _top(m, "3f1c0e2a-uuid-from-db").predictions[0].ktru_code == "77.77.01.000-00000001"
+
+
+def test_describe_mode_and_empty_env(monkeypatch):
+    from ml.config import Settings
+
+    # docker-compose передаёт объявленную без значения переменную пустой строкой — это «не задано».
+    for name in ("EMBEDDING_DIM", "CALIBRATOR_PATH", "RERANKER", "EXTRACTOR"):
+        monkeypatch.setenv(name, "")
+    s = Settings()
+    assert s.embedding_dim == 1024 and s.calibrator_path.endswith("calibrator.joblib") and s.reranker == "none"
+    m = CatalogVersions(s, calibrator=HeuristicCalibrator(), reranker=NoneReranker(), category=None)
+    assert m.describe_mode() == {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False}
+    monkeypatch.setenv("RERANKER", "llm")
+    monkeypatch.setenv("LLM_API_KEY", "")
+    assert CatalogVersions(Settings(), category=None).describe_mode()["reranker"] == "none"  # без ключа LLM нет

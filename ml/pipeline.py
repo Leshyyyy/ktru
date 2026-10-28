@@ -37,7 +37,7 @@ from .charmatch import CharMatcher, EntryMatch, build_query_context
 from .config import Settings
 from .explain import explanation, why_not_chosen
 from .extract import RulesExtractor
-from .rerank import NoneReranker, make_reranker
+from .rerank import NoneReranker, effective_reranker, make_reranker
 from .retrieve import MemoryRetriever
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,10 @@ class Ranked:
 
 
 _LOAD = object()  # модель категорий / эмбеддер: загрузить по настройкам
+
+
+def _mode(settings: Settings, reranker: str) -> dict[str, object]:
+    return {"extractor": "rules", "reranker": reranker, "device": settings.device, "llm_enabled": reranker == "llm"}
 
 
 def make_embedder(settings: Settings):
@@ -111,6 +115,11 @@ class KtruPipeline:
 
     def is_ready(self) -> dict[str, bool]:
         return {"models": True, "catalog": len(self.retriever.items) > 0}
+
+    def describe_mode(self) -> dict[str, object]:
+        """Фактический режим для GET /config (схема Mode в openapi.yaml). Не часть контракта Pipeline: бэкенд
+        вызывает его, если он есть (backend/core/ml.py pipeline_mode). Извлечение пока только по правилам."""
+        return _mode(self.settings, self.reranker.name)
 
     def add_examples(self, pairs: Iterable[tuple[str, str]] | dict[str, str]) -> int:
         """Подтверждённые пользователями пары «текст → код» (FR-4.7). Повтор текста заменяет код. → число пар."""
@@ -373,6 +382,10 @@ class CatalogVersions:
         for engine in engines:
             engine.add_examples(pairs)
         return len(pairs)
+
+    def describe_mode(self) -> dict[str, object]:
+        reranker = self._reranker.name if self._reranker is not None else effective_reranker(self.settings)
+        return _mode(self.settings, reranker)
 
     def is_ready(self) -> dict[str, bool]:
         with self._lock:

@@ -32,7 +32,9 @@ load_dotenv(REPO_ROOT / "ml" / ".env", REPO_ROOT / ".env")
 
 
 def _env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    """Пустое значение — как не заданное: docker-compose передаёт объявленную без значения переменную
+    (`EMBEDDING_DIM:`) пустой строкой, и без этого int("") ронял бы воркер, а CALIBRATOR_PATH="" значил бы «.»."""
+    return os.environ.get(name, "").strip() or default
 
 
 def _compose_database_url() -> str:

@@ -129,6 +129,18 @@ class JevReranker:
             return list(ex.map(lambda k: self._one(texts[k], pairs[k][1]), range(len(pairs))))
 
 
+def effective_reranker(settings) -> str:
+    """Какой реранкер на самом деле работает при этих настройках — те же откаты, что в make_reranker,
+    но без загрузки моделей (для describe_mode до загрузки каталога)."""
+    if settings.reranker == "llm":
+        return "llm" if settings.llm_api_key else "none"
+    if settings.reranker == "cross_encoder":
+        import importlib.util  # noqa: PLC0415
+
+        return "cross_encoder" if importlib.util.find_spec("sentence_transformers") else "none"
+    return "none"
+
+
 def make_reranker(settings) -> tuple[object, bool]:
     """→ (реранкер, degraded). degraded = нужен был LLM-реранкер, но ключа нет."""
     if settings.reranker == "llm":
