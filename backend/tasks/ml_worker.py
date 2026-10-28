@@ -24,7 +24,7 @@ from backend.core import processing
 from backend.core.db import worker_engine
 from backend.core.logs import job_id_var
 from backend.core.ml import catalog_fallback, load_pipeline, pipeline_mode
-from backend.core.queue import PROCESS_CHUNK
+from backend.core.queue import CLASSIFY, PROCESS_CHUNK
 from backend.core.readiness import Heartbeat
 from backend.core.settings import Settings
 
@@ -81,6 +81,15 @@ def process_chunk(self: Task, job_id: str, item_ids: list[str]) -> None:
         processing.fail_chunk(worker_engine(settings), job_uuid, item_uuids, CHUNK_FAILED)
     finally:
         job_id_var.reset(token)
+
+
+@app.task(name=CLASSIFY, ignore_result=False, soft_time_limit=60, time_limit=90)
+def classify(texts: list[str], catalog_version_id: str) -> list[dict[str, Any]]:
+    """POST /classify: ответ возвращается API через бэкенд результатов; ошибка — исключение у ожидающего API."""
+    pipeline = get_pipeline()
+    if pipeline is None:
+        raise RuntimeError("Конвейер не загружен")
+    return processing.classify_texts(worker_engine(settings), pipeline, texts, uuid.UUID(catalog_version_id))
 
 
 @worker_process_init.connect

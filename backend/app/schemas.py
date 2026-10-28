@@ -218,3 +218,26 @@ class PublicConfig(BaseModel):
     limits: Limits
     thresholds: Thresholds
     mode: Mode
+
+
+# --- Быстрая проверка ---------------------------------------------------------------------------------------
+
+
+class ClassifyText(BaseModel):
+    text: str = Field(max_length=5000)
+
+
+class ClassifyRequest(BaseModel):
+    items: list[ClassifyText] = Field(min_length=1)
+
+
+class ClassifyResult(BaseModel):
+    text: str
+    extracted: ExtractedAttributes | None
+    predictions: list[Prediction]
+    path: Literal["fast", "rerank"] | None
+    error: str | None
+
+
+class ClassifyResponse(BaseModel):
+    results: list[ClassifyResult]

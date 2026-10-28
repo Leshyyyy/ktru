@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     max_rows: int = Field(5000, gt=0)
     max_items_per_job: int = Field(1000, gt=0)
     classify_max_items: int = Field(20, gt=0)
+    # Сколько POST /classify ждёт ответа worker-ml (он может досчитывать пачку большой задачи), секунд.
+    classify_timeout_s: float = Field(30, gt=0)
     green_threshold: float = 0.85
     yellow_threshold: float = 0.50
 

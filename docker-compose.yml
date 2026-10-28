@@ -151,6 +151,7 @@ services:
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
       CLASSIFY_MAX_ITEMS:
+      CLASSIFY_TIMEOUT_S:
       GREEN_THRESHOLD:
       YELLOW_THRESHOLD:
       EXTRACTOR:
@@ -224,8 +225,9 @@ services:
       - -A
       - backend.tasks.ml_worker
       - worker
+      # classify — синхронный POST /classify: отдельная очередь, чтобы не ждать за всеми пачками большой задачи.
       - -Q
-      - ml
+      - classify,ml
       - -n
       - ml@%h
       - --concurrency

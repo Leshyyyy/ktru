@@ -23,7 +23,7 @@ def test_celery_is_configured_for_reliable_json_tasks() -> None:
     assert conf.task_acks_late is True
     assert conf.worker_prefetch_multiplier == 1
     assert (conf.task_soft_time_limit, conf.task_time_limit) == (120, 180)
-    assert {q.name for q in conf.task_queues} == {"io", "ml"}
+    assert {q.name for q in conf.task_queues} == {"io", "ml", "classify"}
     assert conf.task_default_queue == "io"
     assert app.amqp.router.route({}, "ml.process_chunk")["queue"].name == "ml"
     assert app.amqp.router.route({}, "io.parse_file")["queue"].name == "io"

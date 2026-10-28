@@ -13,6 +13,7 @@ from celery.signals import setup_logging as celery_setup_logging
 from kombu import Queue
 
 from backend.core.logs import setup_logging
+from backend.core.queue import CLASSIFY_QUEUE
 from backend.core.settings import Settings, get_settings
 
 
@@ -23,8 +24,11 @@ def create_celery(settings: Settings) -> Celery:
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],
-        # Результаты задач пишутся в PostgreSQL, бэкенд результатов Celery не нужен.
+        # Результаты задач пишутся в PostgreSQL. Бэкенд результатов (Redis) нужен только синхронному
+        # POST /classify: его задача включает ignore_result=False, остальные результат не сохраняют.
         task_ignore_result=True,
+        result_backend=settings.redis_url(),
+        result_expires=600,
         # Пачка подтверждается после выполнения: упавший воркер не теряет её. При гибели процесса задача
         # не возвращается в очередь сама (иначе «ядовитая» пачка будет ронять воркер по кругу) — её подберёт
         # watchdog.
@@ -32,7 +36,7 @@ def create_celery(settings: Settings) -> Celery:
         task_reject_on_worker_lost=False,
         worker_prefetch_multiplier=1,
         task_default_queue="io",
-        task_queues=(Queue("io"), Queue("ml")),
+        task_queues=(Queue("io"), Queue("ml"), Queue(CLASSIFY_QUEUE)),
         task_routes={"io.*": {"queue": "io"}, "ml.*": {"queue": "ml"}},
         # Лимиты пачки (раздел 6 аналитики); задачам с другим временем работы лимит задаётся в @app.task.
         task_soft_time_limit=120,
