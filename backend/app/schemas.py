@@ -178,6 +178,21 @@ class CatalogVersionList(BaseModel):
 # --- Система --------------------------------------------------------------------------------------------------
 
 
+class RecentError(BaseModel):
+    job_id: uuid.UUID
+    error: str
+    at: datetime
+
+
+class Stats(BaseModel):
+    jobs_total: int
+    items_total: int
+    green_correction_rate: float | None
+    avg_seconds_per_1000: float | None
+    failed_items_share: float
+    recent_errors: list[RecentError]
+
+
 class ComponentHealth(BaseModel):
     ok: bool
     detail: str | None = None

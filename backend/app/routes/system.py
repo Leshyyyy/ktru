@@ -1,17 +1,19 @@
-"""Тег system: GET /health и GET /config."""
+"""Тег system: GET /health, GET /config и GET /stats."""
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from backend.core.ml import describe_mode
 from backend.core.settings import Settings
 
-from ..deps import get_health_checker, get_ml_status, get_settings
+from ..deps import get_db, get_health_checker, get_ml_status, get_settings
 from ..health import HealthChecker
-from ..schemas import Health, Limits, Mode, PublicConfig, Thresholds
+from ..schemas import Health, Limits, Mode, PublicConfig, Stats, Thresholds
+from ..stats import stats
 
 router = APIRouter(tags=["system"])
 
@@ -43,3 +45,10 @@ def config(
         thresholds=Thresholds(green=settings.green_threshold, yellow=settings.yellow_threshold),
         mode=mode,
     )
+
+
+@router.get("/stats", response_model=Stats)
+def get_stats(
+    settings: Annotated[Settings, Depends(get_settings)], session: Annotated[Session, Depends(get_db)]
+) -> Stats:
+    return stats(session, settings)
