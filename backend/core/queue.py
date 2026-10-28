@@ -12,6 +12,7 @@ from celery.exceptions import TimeoutError as CeleryTimeoutError
 PARSE_FILE = "io.parse_file"
 PROCESS_CHUNK = "ml.process_chunk"
 CLASSIFY = "ml.classify"
+QUALITY_RUN = "ml.quality_run"
 # Отдельная очередь для POST /classify: worker-ml слушает её вместе с ml, и запрос ждёт не больше одной пачки,
 # а не все пачки большой задачи.
 CLASSIFY_QUEUE = "classify"
@@ -30,6 +31,8 @@ class TaskQueue(Protocol):
     def process_chunk(self, job_id: str, item_ids: list[str]) -> None: ...
 
     def classify(self, texts: list[str], catalog_version_id: str, timeout_s: float) -> list[dict[str, Any]]: ...
+
+    def quality_run(self, run_id: str) -> None: ...
 
 
 class CeleryQueue:
@@ -60,3 +63,6 @@ class CeleryQueue:
             raise ClassifyTimeout from e
         finally:
             result.forget()
+
+    def quality_run(self, run_id: str) -> None:
+        self.app.send_task(QUALITY_RUN, args=[run_id], retry=True, retry_policy=_PUBLISH_RETRY)

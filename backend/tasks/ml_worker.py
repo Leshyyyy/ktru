@@ -24,7 +24,8 @@ from backend.core import processing
 from backend.core.db import worker_engine
 from backend.core.logs import job_id_var
 from backend.core.ml import catalog_fallback, load_pipeline, pipeline_mode
-from backend.core.queue import CLASSIFY, PROCESS_CHUNK
+from backend.core.quality import run_quality
+from backend.core.queue import CLASSIFY, PROCESS_CHUNK, QUALITY_RUN
 from backend.core.readiness import Heartbeat
 from backend.core.settings import Settings
 
@@ -90,6 +91,15 @@ def classify(texts: list[str], catalog_version_id: str) -> list[dict[str, Any]]:
     if pipeline is None:
         raise RuntimeError("Конвейер не загружен")
     return processing.classify_texts(worker_engine(settings), pipeline, texts, uuid.UUID(catalog_version_id))
+
+
+@app.task(name=QUALITY_RUN, ignore_result=True, soft_time_limit=1800, time_limit=1900)
+def quality_run(run_id: str) -> None:
+    """POST /quality/run: оценка на размеченном наборе. Занимает очередь ml на время прогона (сотни позиций)."""
+    pipeline = get_pipeline()
+    if pipeline is None:
+        raise RuntimeError("Конвейер не загружен")
+    run_quality(worker_engine(settings), pipeline, uuid.UUID(run_id), pipeline_mode(pipeline, _effective_settings()))
 
 
 @worker_process_init.connect

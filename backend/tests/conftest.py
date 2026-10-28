@@ -21,7 +21,7 @@ from backend.app.main import create_app
 from backend.core import processing
 from backend.core.db import make_engine
 from backend.core.queue import ClassifyTimeout
-from backend.core.readiness import write_status
+from backend.core.readiness import read_status, write_status
 from backend.core.settings import Settings
 from contracts.ml_contracts import Pipeline
 from contracts.stub_pipeline import StubPipeline
@@ -126,6 +126,7 @@ class FakeQueue:
         self.engine: Engine | None = None
         self.pipeline: Pipeline = StubPipeline()
         self.classify_timeout = False
+        self.quality: list[str] = []
 
     def _check(self) -> None:
         if self.broken:
@@ -138,6 +139,10 @@ class FakeQueue:
     def process_chunk(self, job_id: str, item_ids: list[str]) -> None:
         self._check()
         self.chunks.append((job_id, item_ids))
+
+    def quality_run(self, run_id: str) -> None:
+        self._check()
+        self.quality.append(run_id)
 
     def classify(self, texts: list[str], catalog_version_id: str, timeout_s: float) -> list[dict[str, Any]]:
         self._check()
@@ -261,6 +266,7 @@ def stack(db_settings: Settings, tmp_path: Path, fake_redis: FakeRedis) -> Itera
     app = create_app(settings)
     app.dependency_overrides[deps.get_queue] = lambda: queue
     app.dependency_overrides[deps.get_health_checker] = lambda: HealthChecker(engine, fake_redis)  # type: ignore[arg-type]
+    app.dependency_overrides[deps.get_ml_status] = lambda: read_status(fake_redis)
     with TestClient(app) as client:
         yield Stack(client, queue, settings, engine, fake_redis)
     engine.dispose()

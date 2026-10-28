@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -256,3 +256,25 @@ class ClassifyResult(BaseModel):
 
 class ClassifyResponse(BaseModel):
     results: list[ClassifyResult]
+
+
+# --- Качество -------------------------------------------------------------------------------------------------
+
+
+class QualityRunCreate(BaseModel):
+    split: Literal["dev", "test"]
+
+
+class QualityRun(BaseModel):
+    run_id: uuid.UUID
+    split: Literal["dev", "test"]
+    status: Literal["running", "done", "failed"]
+    config: dict[str, Any]
+    # QualityMetrics: ключи evaluate() из ml/ (ml/CLAUDE.md); пустые значения не отдаются.
+    metrics: dict[str, Any] | None
+    created_at: datetime
+
+
+class QualityLatest(BaseModel):
+    dev: QualityRun | None = None
+    test: QualityRun | None = None

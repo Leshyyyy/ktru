@@ -70,6 +70,8 @@ class Settings(BaseSettings):
 
     # Тот же файл читает ML (ml/config.py): в режиме real migrate загружает в базу ровно его.
     ktru_catalog_path: Path | None = None
+    # Разметка для оценки качества (*.jsonl, поля eval_samples): её загружает migrate.
+    eval_samples_dir: Path = REPO_ROOT / "contracts" / "fixtures" / "eval"
 
     ml_ready_ttl_s: int = Field(30, gt=0)
     ml_heartbeat_interval_s: int = Field(10, gt=0)

@@ -1,4 +1,5 @@
-"""Разовый контейнер migrate: миграции, роль приложения в БД и стартовый каталог. `python -m backend.migrate`.
+"""Разовый контейнер migrate: миграции, роль приложения в БД, стартовый каталог и разметка для оценки качества.
+`python -m backend.migrate`.
 
 Остальные сервисы compose ждут его успешного завершения. Повторный запуск ничего не ломает и не дублирует.
 """
@@ -22,6 +23,7 @@ from backend.core.db import make_engine
 from backend.core.logs import setup_logging
 from backend.core.ml import catalog_fallback
 from backend.core.models import CatalogVersion
+from backend.core.quality import seed_eval_samples
 from backend.core.settings import ConfigError, Settings, get_settings
 
 log = logging.getLogger("backend.migrate")
@@ -43,6 +45,7 @@ def main(settings: Settings | None = None) -> int:
                 upgrade(engine)
                 ensure_app_role(engine, settings)
                 seed_catalog(engine, prepare_catalog(settings))
+                seed_eval_samples(engine, settings.eval_samples_dir)
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY})
     except (ConfigError, CatalogImportError) as e:

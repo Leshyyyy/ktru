@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from backend.core.db import worker_engine
 from backend.core.processing import requeue_stale_jobs
+from backend.core.quality import fail_stale_runs
 from backend.core.queue import CeleryQueue
 from backend.core.uploads import cleanup_uploads
 
@@ -17,7 +18,9 @@ def watchdog() -> None:
     """Задачи в queued, parsing или processing без обновлений дольше 5 минут → заново в очередь их разбор
     или pending-позиции (backend/core/processing.py: requeue_stale_jobs).
     """
-    requeue_stale_jobs(worker_engine(settings), CeleryQueue(app))
+    engine = worker_engine(settings)
+    requeue_stale_jobs(engine, CeleryQueue(app))
+    fail_stale_runs(engine)
 
 
 @app.task(name="io.cleanup_uploads", ignore_result=True)
