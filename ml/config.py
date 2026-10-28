@@ -56,8 +56,9 @@ class Settings:
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL"))
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY"))
     jev_model: str = field(default_factory=lambda: _env("JEV_MODEL", "typesafe/jev-1.14"))
-    # Пусто = TF-IDF по символьным n-граммам (работает без скачивания моделей).
-    embedder_model: str = field(default_factory=lambda: _env("EMBEDDER_MODEL"))
+    # Эмбеддинги наименований (ТЗ: «семантическое сопоставление с векторными эмбеддингами», pgvector). «-» — выключить;
+    # без torch/sentence-transformers в образе конвейер работает на TF-IDF и пишет предупреждение.
+    embedder_model: str = field(default_factory=lambda: _env("EMBEDDER_MODEL", "intfloat/multilingual-e5-small"))
     embedding_dim: int = field(default_factory=lambda: int(_env("EMBEDDING_DIM", "1024")))
     cross_encoder_model: str = field(default_factory=lambda: _env("CROSS_ENCODER_MODEL", "BAAI/bge-reranker-v2-m3"))
     catalog_path: str = field(default_factory=lambda: _env("KTRU_CATALOG_PATH"))

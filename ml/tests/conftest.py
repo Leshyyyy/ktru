@@ -44,7 +44,7 @@ SYNTH_ROWS = [
 def make_pipeline(entries, category=None) -> KtruPipeline:
     # Модель категорий строится из СТЕ локально (ml/artifacts) — в тестах только явно переданная искусственная.
     return KtruPipeline(Settings(), catalog=Catalog(entries), calibrator=HeuristicCalibrator(), reranker=NoneReranker(),
-                        category=category)
+                        category=category, embedder=None)
 
 
 @pytest.fixture(scope="session")

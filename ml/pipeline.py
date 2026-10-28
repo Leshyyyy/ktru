@@ -80,11 +80,16 @@ def _mode(settings: Settings, reranker: str) -> dict[str, object]:
 
 def make_embedder(settings: Settings):
     """Эмбеддер по EMBEDDER_MODEL или None (тогда поиск только на TF-IDF). torch импортируется только здесь."""
-    if not settings.embedder_model:
+    if not settings.embedder_model or settings.embedder_model == "-":
         return None
-    from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
+    try:
+        from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
 
-    return SentenceTransformerEmbedder(settings.embedder_model, settings.device)
+        return SentenceTransformerEmbedder(settings.embedder_model, settings.device)
+    except ImportError:
+        log.warning("EMBEDDER_MODEL=%s, но sentence-transformers не установлен — поиск без эмбеддингов",
+                    settings.embedder_model)
+        return None
 
 
 class KtruPipeline:

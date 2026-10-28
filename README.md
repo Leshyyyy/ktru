@@ -53,8 +53,8 @@ python -m ml.fetch_catalog --out data/ktru/ktru_data/catalog.jsonl   # откр�
 
 Ручные решения сохраняются в `confirmed_examples`; ML принимает их через `add_examples` и для того же текста
 сразу отдаёт подтверждённый код (подключение в воркере — `backend/core/processing.py`).
-Эмбеддинги (`EMBEDDER_MODEL`, например `intfloat/multilingual-e5-small`) хранятся в `catalog_items.embedding`
-(pgvector, `vector(1024)`); по умолчанию выключены — на наших замерах точность они не подняли (`ml/CLAUDE.md`).
+Эмбеддинги наименований (`intfloat/multilingual-e5-small`) — смысловая близость в поиске; векторы хранятся в
+`catalog_items.embedding` (pgvector, `vector(1024)`) и считаются один раз при первом старте ML-воркера.
 
 ### Качество (полный КТРУ: 54 190 позиций для поиска, без ключей LLM, 2 ядра CPU)
 

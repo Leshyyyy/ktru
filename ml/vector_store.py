@@ -64,13 +64,18 @@ class PgVectorStore:
             ).fetchall()
             if not rows:
                 return 0
-            names = sorted({name for _, name in rows})
-            vec_of = dict(zip(names, pad(np.asarray(embedder.embed(names, kind=kind)), self.dim)))
+            ids_of: dict[str, list] = {}
+            for row_id, name in rows:
+                ids_of.setdefault(name, []).append(row_id)
+            names = sorted(ids_of)
+            # Порциями: каждая сразу пишется в базу (autocommit), и перезапуск воркера посреди первого расчёта
+            # не начинает его заново — пересчитаются только строки, где embedding ещё пуст.
             with conn.cursor() as cur:
-                for start in range(0, len(rows), BATCH):
-                    chunk = rows[start:start + BATCH]
+                for start in range(0, len(names), BATCH):
+                    chunk = names[start:start + BATCH]
+                    vecs = pad(np.asarray(embedder.embed(chunk, kind=kind)), self.dim)
                     cur.executemany("UPDATE catalog_items SET embedding = %s WHERE id = %s",
-                                    [(vec_of[name], row_id) for row_id, name in chunk])
+                                    [(v, row_id) for name, v in zip(chunk, vecs) for row_id in ids_of[name]])
             log.info("Эмбеддинги каталога %s: %d позиций, %d наименований", version_id, len(rows), len(names))
             return len(rows)
 
