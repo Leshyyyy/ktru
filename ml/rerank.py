@@ -2,7 +2,8 @@
 
 none           — порядок не меняется (режим без моделей и ключей).
 cross_encoder  — локальная модель sentence-transformers (нужен torch).
-llm            — Jev (TypeSafe) через OpenRouter: choice среди кандидатов с вероятностями. Нужен LLM_API_KEY.
+llm            — языковая модель через OpenRouter выбирает код из наших кандидатов: LLM_MODEL (любая модель
+                 с OpenAI-совместимым API) или, если он пуст, Jev (TypeSafe). Нужен LLM_API_KEY.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -141,9 +143,66 @@ def effective_reranker(settings) -> str:
     return "none"
 
 
+class ChatChooser(JevReranker):
+    """Модель с OpenAI-совместимым API (OpenRouter) выбирает один код из кандидатов или «ни один».
+
+    Модели не нужно знать КТРУ: кандидатов и их обязательные характеристики даёт наш поиск, модель только
+    сравнивает смысл — «Рюкзак школьный голубой» не «Протез радужки», хотя совпало слово «голубой».
+    Ответ — {"choice": N}; выбранный код получает оценку 1, остальные 0. Ошибка сети — исходный порядок.
+    """
+
+    PROMPT = (
+        "Ты эксперт по госзакупкам и каталогу КТРУ. Дана строка спецификации закупки и пронумерованные позиции "
+        "КТРУ — кандидаты от поиска. Выбери позицию, которая описывает именно этот товар: сначала по смыслу "
+        "наименования (что это за предмет), затем по обязательным характеристикам. Если ни одна не подходит "
+        "по смыслу, ответь 0. Ответ — только JSON: {\"choice\": номер}."
+    )
+
+    def __init__(self, api_key: str, model: str, base_url: str = "https://openrouter.ai/api/v1", **kw):
+        super().__init__(api_key, model, **kw)
+        self.url = base_url.rstrip("/") + "/chat/completions"
+
+    def _one(self, text: str, cands: list[Candidate]) -> RerankResult:
+        top = cands[:RERANK_TOP]
+        fallback = RerankResult(ordered_codes=[c.ktru_code for c in top], scores=[0.0] * len(top))
+        if len(top) < 2:
+            return fallback
+        options = "\n".join(f"{i}. {_describe(c, 400)}" for i, c in enumerate(top, start=1))
+        body = {
+            "model": self.model,
+            "temperature": 0,
+            "max_tokens": 20,
+            "messages": [{"role": "system", "content": self.PROMPT},
+                         {"role": "user", "content": f"Строка: {text[:1200]}\n\nПозиции КТРУ:\n{options}"}],
+        }
+        key = hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        try:
+            probs = self._cache.get(key)
+            if probs is None:
+                for attempt in range(3):  # 429 — лимит частоты у провайдера: короткая пауза и повтор
+                    r = self.client.post(self.url, json=body)
+                    if r.status_code != 429:
+                        break
+                    time.sleep(1 + attempt)
+                r.raise_for_status()
+                answer = r.json()["choices"][0]["message"]["content"]
+                choice = int(json.loads(answer[answer.index("{"):answer.rindex("}") + 1])["choice"])
+                probs = {c.ktru_code: float(i == choice) for i, c in enumerate(top, start=1)}
+                self._remember(key, probs)
+            order = sorted(top, key=lambda c: -probs.get(c.ktru_code, 0.0))
+            return RerankResult(ordered_codes=[c.ktru_code for c in order],
+                                scores=[probs.get(c.ktru_code, 0.0) for c in order])
+        except Exception as e:  # noqa: BLE001 — сеть, лимиты, формат ответа: позиция не падает
+            log.warning("LLM недоступна: %s", e)
+            return fallback
+
+
 def make_reranker(settings) -> tuple[object, bool]:
     """→ (реранкер, degraded). degraded = нужен был LLM-реранкер, но ключа нет."""
     if settings.reranker == "llm":
+        if settings.llm_api_key and settings.llm_model:
+            base = settings.llm_base_url or "https://openrouter.ai/api/v1"
+            return ChatChooser(settings.llm_api_key, settings.llm_model, base, cache_path=settings.llm_cache_path), False
         if settings.llm_api_key:
             return JevReranker(settings.llm_api_key, settings.jev_model, cache_path=settings.llm_cache_path), False
         log.warning("RERANKER=llm, но LLM_API_KEY не задан — работаю без реранкера")
