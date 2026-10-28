@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("/data/uploads")
     # Через сколько часов удалять загруженный файл, по которому так и не создали задачу.
     upload_ttl_hours: int = Field(24, gt=0)
+    # Лимит файла POST /catalog/import (JSONL): полный КТРУ больше лимита спецификаций.
+    catalog_import_max_mb: int = Field(300, gt=0)
     # Через запятую. xls читается, но по договорённости команды пока не принимается (вопрос в PR #5).
     upload_extensions: Annotated[list[str], NoDecode] = ["xlsx", "csv", "pdf"]
     max_file_mb: int = Field(50, gt=0)

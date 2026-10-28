@@ -180,3 +180,17 @@ def test_validation_message_fallbacks() -> None:
 )
 def test_plural(n: int, word: str) -> None:
     assert plural(n, "позиция", "позиции", "позиций") == word
+
+
+def test_body_limit_is_larger_for_catalog_import(settings: Settings) -> None:
+    """Каталог КТРУ больше спецификации: у POST /catalog/import свой лимит (CATALOG_IMPORT_MAX_MB)."""
+    small = settings.model_copy(update={"max_file_mb": 1, "catalog_import_max_mb": 5})
+    three_mb = str(3 * 1024 * 1024)
+    with TestClient(_app(small), raise_server_exceptions=False) as c:
+        files = c.post("/api/v1/files", content=b"x", headers={"Content-Length": three_mb})
+        assert (files.status_code, _error(files)["message"]) == (413, "Файл больше 1 МБ. Разбейте его на части.")
+        too_big = str(7 * 1024 * 1024)
+        catalog = c.post("/api/v1/catalog/import", content=b"x", headers={"Content-Length": too_big})
+        assert (catalog.status_code, _error(catalog)["message"]) == (413, "Файл больше 5 МБ. Разбейте его на части.")
+        within = c.post("/api/v1/catalog/import", content=b"x", headers={"Content-Length": three_mb})
+        assert within.status_code != 413

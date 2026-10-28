@@ -127,6 +127,7 @@ class FakeQueue:
         self.pipeline: Pipeline = StubPipeline()
         self.classify_timeout = False
         self.quality: list[str] = []
+        self.catalog_imports: list[tuple[str, str]] = []
 
     def _check(self) -> None:
         if self.broken:
@@ -139,6 +140,10 @@ class FakeQueue:
     def process_chunk(self, job_id: str, item_ids: list[str]) -> None:
         self._check()
         self.chunks.append((job_id, item_ids))
+
+    def import_catalog(self, version_id: str, storage_path: str) -> None:
+        self._check()
+        self.catalog_imports.append((version_id, storage_path))
 
     def quality_run(self, run_id: str) -> None:
         self._check()

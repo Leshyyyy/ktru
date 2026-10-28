@@ -63,8 +63,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # add_middleware ставит новый слой снаружи: порядок от внешнего — CORS, контекст запроса, лимит тела.
     app.add_middleware(
         BodySizeLimitMiddleware,
-        max_bytes=settings.max_file_mb * 1024 * 1024 + _MULTIPART_OVERHEAD,
         max_file_mb=settings.max_file_mb,
+        overhead_bytes=_MULTIPART_OVERHEAD,
+        path_limits={f"{API_PREFIX}/catalog/import": settings.catalog_import_max_mb},
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(

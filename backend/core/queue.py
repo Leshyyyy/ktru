@@ -10,6 +10,7 @@ from celery import Celery
 from celery.exceptions import TimeoutError as CeleryTimeoutError
 
 PARSE_FILE = "io.parse_file"
+IMPORT_CATALOG = "io.import_catalog"
 PROCESS_CHUNK = "ml.process_chunk"
 CLASSIFY = "ml.classify"
 QUALITY_RUN = "ml.quality_run"
@@ -33,6 +34,8 @@ class TaskQueue(Protocol):
     def classify(self, texts: list[str], catalog_version_id: str, timeout_s: float) -> list[dict[str, Any]]: ...
 
     def quality_run(self, run_id: str) -> None: ...
+
+    def import_catalog(self, version_id: str, storage_path: str) -> None: ...
 
 
 class CeleryQueue:
@@ -66,3 +69,6 @@ class CeleryQueue:
 
     def quality_run(self, run_id: str) -> None:
         self.app.send_task(QUALITY_RUN, args=[run_id], retry=True, retry_policy=_PUBLISH_RETRY)
+
+    def import_catalog(self, version_id: str, storage_path: str) -> None:
+        self.app.send_task(IMPORT_CATALOG, args=[version_id, storage_path], retry=True, retry_policy=_PUBLISH_RETRY)

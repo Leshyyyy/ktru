@@ -18,7 +18,13 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.core.catalog import CatalogImportError, download_catalog, file_sha256, import_catalog_file
+from backend.core.catalog import (
+    MIGRATE_SOURCE,
+    CatalogImportError,
+    download_catalog,
+    file_sha256,
+    import_catalog_file,
+)
 from backend.core.db import make_engine
 from backend.core.logs import setup_logging
 from backend.core.ml import catalog_fallback
@@ -153,7 +159,7 @@ def seed_catalog(engine: Engine, settings: Settings) -> None:
         if existing is not None:
             log.info("Каталог уже загружен", extra={"version_id": str(existing), "file": path.name})
             return
-        version = import_catalog_file(session, path, source=f"migrate:{path.name}", note=note)
+        version = import_catalog_file(session, path, source=f"{MIGRATE_SOURCE}{path.name}", note=note)
         log.info(
             "Каталог загружен",
             extra={"version_id": str(version.id), "items": version.items_count, "file": path.name},

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import threading
 import time
 import uuid
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from redis import Redis
 
 from backend.core import processing
+from backend.core.catalog import CatalogSync
 from backend.core.db import worker_engine
 from backend.core.logs import job_id_var
 from backend.core.ml import catalog_fallback, load_pipeline, pipeline_mode
@@ -47,6 +49,9 @@ _state: dict[str, Any] = {
     "heartbeat": None,
     "examples": processing.ExampleFeed(),
 }
+
+
+_stopping = threading.Event()
 
 
 def _effective_settings() -> Settings:
@@ -124,10 +129,25 @@ def _load_pipeline(**_: Any) -> None:
     heartbeat = Heartbeat(redis, _payload, settings.ml_heartbeat_interval_s, settings.ml_ready_ttl_s)
     heartbeat.start()
     _state["heartbeat"] = heartbeat
+    if _state["pipeline"] is not None:
+        sync = CatalogSync(worker_engine(settings), _state["pipeline"])
+        threading.Thread(target=_sync_catalog, args=(sync,), name="catalog-sync", daemon=True).start()
+
+
+def _sync_catalog(sync: CatalogSync) -> None:
+    """FR-8.1: раз в ML_HEARTBEAT_INTERVAL_S проверяет, нет ли новой версии каталога (сразу после старта — тоже)."""
+    while True:
+        try:
+            sync.poll()
+        except Exception:
+            log.warning("Не удалось проверить версии каталога", exc_info=True)
+        if _stopping.wait(settings.ml_heartbeat_interval_s):
+            return
 
 
 @worker_process_shutdown.connect
 def _stop_heartbeat(**_: Any) -> None:
+    _stopping.set()
     if heartbeat := _state["heartbeat"]:
         heartbeat.stop()
 
@@ -147,7 +167,17 @@ def _payload() -> dict[str, Any]:
         "mode": pipeline_mode(pipeline, _effective_settings()),
         "error": _state["error"],
         "fallback": _state["fallback"],
+        "catalog_versions": _loaded_versions(pipeline),
         "host": socket.gethostname(),
         "pid": os.getpid(),
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
+
+
+def _loaded_versions(pipeline: Any) -> list[str] | None:
+    """Версии каталога в памяти конвейера (для отладки FR-8.1); «» — каталог из файла KTRU_CATALOG_PATH."""
+    loaded = getattr(pipeline, "loaded_versions", None)
+    try:
+        return list(loaded()) if loaded else None
+    except Exception:
+        return None
