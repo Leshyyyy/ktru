@@ -1,0 +1,71 @@
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.mark {
+  display: inline-grid;
+  place-items: center;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--mantine-primary-color-filled);
+  color: white;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+}
+
+.link {
+  padding: 6px 12px;
+  border-radius: var(--mantine-radius-md);
+  font-size: var(--mantine-font-size-sm);
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+  text-decoration: none;
+
+  &:hover {
+    background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+    color: var(--mantine-color-text);
+  }
+
+  &[aria-current="page"] {
+    background: var(--mantine-primary-color-light);
+    color: var(--mantine-primary-color-light-color);
+  }
+}
+
+.mobileLink {
+  composes: link;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.demo {
+  background: light-dark(var(--mantine-color-yellow-0), rgba(250, 176, 5, 0.12));
+  border-bottom: 1px solid light-dark(var(--mantine-color-yellow-2), rgba(250, 176, 5, 0.25));
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-3));
+  padding: 6px 0;
+}
+
+.health {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin: 0 6px;
+  background: var(--mantine-color-gray-5);
+
+  &[data-ok] {
+    background: var(--mantine-color-teal-6);
+    box-shadow: 0 0 0 3px light-dark(var(--mantine-color-teal-1), rgba(18, 184, 134, 0.2));
+  }
+
+  &[data-error] {
+    background: var(--mantine-color-red-6);
+  }
+}
