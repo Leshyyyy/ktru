@@ -89,3 +89,14 @@ def test_embedder_failure_does_not_stop_worker(monkeypatch):
     monkeypatch.setattr(ml.embed, "SentenceTransformerEmbedder", offline)
     monkeypatch.setenv("EMBEDDER_MODEL", "intfloat/multilingual-e5-small")
     assert make_embedder(Settings()) is None
+
+
+def test_evaluate_accepts_worker_pipeline():
+    # Бэкенд (/quality/run) передаёт в evaluate то, что живёт в воркере, — CatalogVersions с версией каталога.
+    from ml.evaluate import evaluate
+
+    m = CatalogVersions(calibrator=HeuristicCalibrator(), reranker=NoneReranker(), category=None, embedder=None)
+    m.load_version("v1", [_row("77.77.02.000-00000003", "Шприц одноразовый")])
+    metrics = evaluate([{"id": "1", "raw_text": "Шприц одноразовый", "expected_ktru_code": "77.77.02.000-00000003"}],
+                       m, catalog_version_id="v1")
+    assert metrics["top1_full_code"] == 1.0 and metrics["samples"] == 1

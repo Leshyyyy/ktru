@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from contracts.ml_contracts import PipelineOptions, RawItem
+from contracts.ml_contracts import Pipeline, PipelineOptions, RawItem
 
 from .config import ARTIFACTS, Settings
 from .pipeline import KtruPipeline
@@ -42,10 +42,12 @@ def _okpd_level(code: str, k: int) -> str:
     return ".".join(code.split("-")[0].split(".")[:k])
 
 
-def evaluate(samples: list[dict], pipe: KtruPipeline, text_field: str = "raw_text") -> dict:
+def evaluate(samples: list[dict], pipe: Pipeline, text_field: str = "raw_text", catalog_version_id: str = "") -> dict:
+    """Метрики раздела 9 на размеченных строках. pipe — любой Pipeline: KtruPipeline или то, что отдаёт
+    get_pipeline() в воркере (CatalogVersions) — нужен только classify_batch. Подтверждённые примеры выключены."""
     items = [RawItem(item_id=s["id"], text=s.get(text_field) or s["raw_text"]) for s in samples]
     t0 = time.perf_counter()
-    results = pipe.classify_batch(items, "", PipelineOptions(use_feedback=False))
+    results = pipe.classify_batch(items, catalog_version_id, PipelineOptions(use_feedback=False))
     seconds = time.perf_counter() - t0
 
     top1 = top3 = okpd = fast = any_valid = okpd_top3 = 0
