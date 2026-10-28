@@ -68,7 +68,14 @@ curl -s -X POST $API/jobs/$JOB/cancel | jq '{status}'   # 409 invalid_state, е�
 curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $API/jobs/$JOB   # 204
 ```
 
-Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.
+**7. Выгрузка** — когда задача завершена (`done`, `done_with_errors`) или отменена. `format`: `source` (как загружен;
+для pdf — xlsx), `xlsx`, `csv`, `json`. Число непроверенных позиций — в заголовке `X-Unreviewed-Count`.
 
-Выгрузка результата (`GET /jobs/{id}/export`) появится следующей; до тех пор её можно посмотреть на моке фронтенда
-(`cd frontend && npm run dev`).
+```bash
+curl -s -D headers.txt -o result.xlsx "$API/jobs/$JOB/export"
+grep -i -E 'x-unreviewed-count|content-disposition' headers.txt
+curl -s "$API/jobs/$JOB/export?format=json" | jq '.[0]'
+curl -s "$API/jobs/$JOB/export?allow_unreviewed=false" | jq .error   # 409 unreviewed_items, если такие остались
+```
+
+Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.

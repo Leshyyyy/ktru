@@ -9,7 +9,7 @@
 | `app/main.py` | `create_app()`: роутеры под `/api/v1`, обработчики ошибок, middleware, lifespan (движок БД, Redis, очередь Celery) |
 | `app/errors.py` | `ApiError` и единый формат `{"error": {"code", "message", "details"}}`; валидация → 400 `invalid_request` с текстом по-русски |
 | `app/middleware.py` | request_id и строка лога на запрос, заголовки безопасности, лимит тела (413 `file_too_large`) |
-| `app/routes/` | маршруты по тегам `openapi.yaml`: `files.py` (`POST /files`), `jobs.py` (`/jobs`, отмена, удаление), `items.py` (позиции и решения: confirm, decision, confirm-bulk), `catalog.py` (поиск, позиция КТРУ, версии), `system.py` (`/health`, `/config`) |
+| `app/routes/` | маршруты по тегам `openapi.yaml`: `files.py` (`POST /files`), `jobs.py` (`/jobs`, отмена, удаление), `items.py` (позиции и решения: confirm, decision, confirm-bulk), `catalog.py` (поиск, позиция КТРУ, версии), `export.py` (выгрузка через `backend/files`), `system.py` (`/health`, `/config`) |
 | `app/views.py` | сборка ответов `Job` и `Item` из таблиц: summary, ETA, цвет, предсказания с наименованиями из каталога задачи, `final` из `v_item_final` |
 | `app/health.py` | проверки для `/health`: база, Redis, готовность worker-ml, каталог |
 | `core/settings.py` | все переменные окружения (`Settings`); список с пояснениями — `.env.example` |
