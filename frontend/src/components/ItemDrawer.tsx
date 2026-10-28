@@ -1,43 +1,32 @@
+/**
+ * Карточка позиции — экраны 5 «Карточка позиции» и 6 «Ручная правка» из docs/team.
+ * Панель 580 px справа поверх таблицы; таблица остаётся рабочей, выбранная строка подсвечена.
+ * Клавиши: J/↓ и K/↑ — соседние строки, 1–3 — выбрать вариант, Enter — подтвердить выбранный.
+ */
 import {
   Alert,
-  Badge,
   Box,
   Button,
-  Card,
-  Divider,
   Drawer,
   Group,
   Kbd,
   Loader,
-  Paper,
-  Select,
-  SimpleGrid,
+  ScrollArea,
   Skeleton,
   Stack,
-  Table,
   Text,
   Textarea,
-  ThemeIcon,
-  Title,
-  Tooltip,
+  TextInput,
+  UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
-import {
-  IconAlertTriangle,
-  IconArrowDown,
-  IconArrowUp,
-  IconCheck,
-  IconCircleCheck,
-  IconCircleDashed,
-  IconCircleX,
-  IconUser,
-} from "@tabler/icons-react";
-import { useState } from "react";
-import { useCatalogSearch, useConfirmItem, useCorrectItem, useItem } from "../api/hooks";
+import { IconArrowDown, IconArrowUp, IconCheck, IconSearch, IconX } from "@tabler/icons-react";
+import { useEffect, useState } from "react";
+import { useCatalogItem, useCatalogSearch, useItem } from "../api/hooks";
 import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
-import { FLAG } from "../lib/format";
-import { ConfidenceBadge, ItemStatusBadge, KtruCode } from "./badges";
+import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode } from "./badges";
+import { useDecisions, useWithOverlay } from "./DecisionQueue";
+import classes from "./ItemDrawer.module.css";
 
 type Props = {
   itemId: string | null;
@@ -47,413 +36,393 @@ type Props = {
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  /** После решения — к следующей позиции «Требует проверки». */
+  onAfterDecision: () => void;
+  onGroup: (groupId: string) => void;
 };
 
-export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext }: Props) {
-  const { data: item, isLoading } = useItem(itemId, fromList);
-  const confirm = useConfirmItem();
+export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onAfterDecision, onGroup }: Props) {
+  const { data, isLoading } = useItem(itemId, fromList);
+  const withOverlay = useWithOverlay();
+  const item = data ? withOverlay(data) : undefined;
+  const { decide } = useDecisions();
 
-  const canConfirm = !!item && item.predictions.length > 0 && item.status !== "pending" && item.status !== "confirmed";
-  const doConfirm = () =>
-    item &&
-    confirm.mutate(item.item_id, {
-      onSuccess: () => {
-        notifications.show({ color: "primary", message: `Позиция №${item.row_index + 1}: код подтверждён` });
-        onNext?.();
-      },
-      onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
-    });
+  // Выбранный вариант: по умолчанию тот, что сейчас итоговый, иначе первый.
+  const [picked, setPicked] = useState(1);
+  const [manual, setManual] = useState(false);
+  useEffect(() => {
+    const finalRank = item?.predictions.find((p) => p.ktru_code === item.final?.ktru_code)?.rank;
+    setPicked(finalRank ?? 1);
+    setManual(item?.status === "failed");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId, data?.item_id]);
+
+  const pending = item?.status === "pending";
+  const chosen = item?.predictions.find((p) => p.rank === picked);
+  const alreadyFinal = !!chosen && item?.final?.source === "user" && item.final.ktru_code === chosen.ktru_code;
+  const canDecide = !!item && !!chosen && !pending && !alreadyFinal;
+
+  const decideVariant = (p: Prediction | undefined = chosen) => {
+    if (!item || !p || pending) return;
+    if (p.rank === 1) decide({ kind: "confirm", item, code: p.ktru_code, name: p.name });
+    else decide({ kind: "correct", item, code: p.ktru_code, name: p.name, reason: "Выбран вариант модели" });
+    onAfterDecision();
+  };
 
   useHotkeys(
     itemId
       ? [
-          ["ArrowDown", () => onNext?.()],
           ["j", () => onNext?.()],
-          ["ArrowUp", () => onPrev?.()],
+          ["ArrowDown", () => onNext?.()],
           ["k", () => onPrev?.()],
-          ["Enter", () => canConfirm && doConfirm()],
+          ["ArrowUp", () => onPrev?.()],
+          ["1", () => setPicked(1)],
+          ["2", () => item && item.predictions.length > 1 && setPicked(2)],
+          ["3", () => item && item.predictions.length > 2 && setPicked(3)],
+          ["Enter", () => canDecide && decideVariant()],
         ]
       : [],
   );
+
+  const second = item?.predictions.find((p) => p.rank === (picked === 1 ? 2 : 1));
 
   return (
     <Drawer
       opened={!!itemId}
       onClose={onClose}
       position="right"
-      size="min(640px, 100vw)"
-      title={
-        item ? (
-          <Group gap="sm">
-            <Text fw={650} size="lg">
-              Позиция №{item.row_index + 1}
-            </Text>
-            <ItemStatusBadge status={item.status} />
-          </Group>
-        ) : (
-          <Text fw={650} size="lg">
-            Позиция
-          </Text>
-        )
-      }
-      styles={{ body: { paddingBottom: 0 } }}
+      size={580}
+      withOverlay={false}
+      withCloseButton={false}
+      trapFocus={false}
+      lockScroll={false}
+      closeOnClickOutside={false}
+      padding={0}
+      classNames={{ content: classes.content, body: classes.body }}
     >
-      {isLoading || !item ? (
-        <Stack>
+      {!item || isLoading ? (
+        <Stack p="lg">
           <Skeleton h={60} />
           <Skeleton h={160} />
           <Skeleton h={120} />
         </Stack>
       ) : (
-        <ItemBody item={item} job={job} />
-      )}
-
-      {/* Панель действий прилипает к низу прокручиваемой карточки: кнопки всегда под рукой. */}
-      <Paper
-        pos="sticky"
-        bottom={0}
-        mx="calc(var(--mantine-spacing-md) * -1)"
-        mt="lg"
-        p="md"
-        withBorder
-        radius={0}
-        style={{ zIndex: 2, borderLeft: 0, borderRight: 0, borderBottom: 0 }}
-      >
-        <Group justify="space-between">
-          <Group gap="xs">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={onPrev}
-              disabled={!onPrev}
-              leftSection={<IconArrowUp size={16} />}
-            >
-              Пред.
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={onNext}
-              disabled={!onNext}
-              leftSection={<IconArrowDown size={16} />}
-            >
-              След.
-            </Button>
-          </Group>
-          <Group gap="sm">
-            <Text size="xs" c="dimmed" visibleFrom="sm">
-              <Kbd size="xs">Enter</Kbd> подтвердить · <Kbd size="xs">↑</Kbd> <Kbd size="xs">↓</Kbd> листать
+        <>
+          <div className={classes.hd}>
+            <Group justify="space-between" wrap="nowrap">
+              <Group gap="sm" wrap="nowrap">
+                <ItemStatusBadge status={item.status} />
+                <Text size="sm" c="dimmed">
+                  Строка {item.row_index + 1}
+                  {item.extracted?.quantity != null && ` · ${item.extracted.quantity} ${item.extracted.unit ?? ""}`}
+                </Text>
+              </Group>
+              <Group gap={6} wrap="nowrap">
+                <Button variant="default" size="compact-sm" onClick={onPrev} disabled={!onPrev} aria-label="Предыдущая">
+                  <IconArrowUp size={14} />
+                  <Kbd size="xs" ml={4}>
+                    K
+                  </Kbd>
+                </Button>
+                <Button variant="default" size="compact-sm" onClick={onNext} disabled={!onNext} aria-label="Следующая">
+                  <IconArrowDown size={14} />
+                  <Kbd size="xs" ml={4}>
+                    J
+                  </Kbd>
+                </Button>
+                <Drawer.CloseButton aria-label="Закрыть" />
+              </Group>
+            </Group>
+            <Text fz={19} fw={600} lh={1.35} mt="sm">
+              {item.raw_text}
             </Text>
+            <Group gap={6}>
+              <FlagChips flags={item.flags} />
+              {item.group_id && (
+                <Box mt={4}>
+                  <GroupBadge size={item.group_size ?? 1} onClick={() => onGroup(item.group_id!)} />
+                </Box>
+              )}
+            </Group>
+          </div>
+
+          <ScrollArea className={classes.bd} type="auto">
+            <Stack gap="lg" p="lg" pt="md">
+              {pending && (
+                <Alert color="gray" icon={<Loader size={16} />}>
+                  Позиция ещё обрабатывается — решение можно будет принять, когда модель предложит код.
+                </Alert>
+              )}
+              {item.error && (
+                <Alert color="red" title="Позицию не удалось обработать">
+                  {item.error} Код можно указать вручную ниже.
+                </Alert>
+              )}
+              {item.final?.source === "user" && (
+                <Text size="sm">
+                  Итоговый код выбран человеком: <KtruCode code={item.final.ktru_code} /> {item.final.name}
+                </Text>
+              )}
+
+              {item.extracted && <Attributes item={item} />}
+
+              {item.predictions.length > 0 && (
+                <div>
+                  <div className={classes.sectT}>
+                    <span>Варианты КТРУ</span>
+                    <span>уверенность</span>
+                  </div>
+                  <Stack gap={10}>
+                    {item.predictions.map((p) => (
+                      <Variant key={p.rank} p={p} picked={picked === p.rank} onPick={() => setPicked(p.rank)} />
+                    ))}
+                  </Stack>
+                </div>
+              )}
+
+              {!manual && (
+                <Text size="sm">
+                  <UnstyledButton className={classes.link} onClick={() => setManual(true)} disabled={pending}>
+                    Найти другой код в каталоге
+                  </UnstyledButton>
+                  {item.path && (
+                    <Text span size="sm" c="dimmed">
+                      {" "}
+                      · путь: {item.path === "fast" ? "быстрый" : "реранкер"}
+                    </Text>
+                  )}
+                </Text>
+              )}
+              {manual && (
+                <ManualCode
+                  item={item}
+                  versionId={job.catalog_version_id}
+                  disabled={pending}
+                  onSave={(code, name, reason) => {
+                    decide({ kind: "correct", item, code, name, reason });
+                    onAfterDecision();
+                  }}
+                  onCancel={item.status === "failed" ? undefined : () => setManual(false)}
+                />
+              )}
+            </Stack>
+          </ScrollArea>
+
+          <div className={classes.ft}>
             <Button
-              leftSection={<IconCheck size={16} />}
-              onClick={doConfirm}
-              disabled={!canConfirm}
-              loading={confirm.isPending}
+              size="md"
+              flex={1}
+              disabled={!canDecide}
+              onClick={() => decideVariant()}
+              rightSection={canDecide ? <Kbd size="xs">Enter</Kbd> : undefined}
             >
-              Подтвердить
+              {pending
+                ? "Позиция ещё обрабатывается"
+                : alreadyFinal
+                  ? `Вариант ${picked} уже выбран`
+                  : !chosen
+                    ? "Нет вариантов — укажите код вручную"
+                    : picked === 1
+                      ? item.status === "confirmed"
+                        ? "Вариант 1 подтверждён"
+                        : "Подтвердить вариант 1"
+                      : `Выбрать вариант ${picked}`}
             </Button>
-          </Group>
-        </Group>
-      </Paper>
+            {second && !pending && (
+              <Button size="md" variant="default" onClick={() => setPicked(second.rank)}>
+                Выбрать вариант {second.rank}
+              </Button>
+            )}
+          </div>
+        </>
+      )}
     </Drawer>
   );
 }
 
-function ItemBody({ item, job }: { item: Item; job: Job }) {
-  const correct = useCorrectItem();
-  const choose = (code: string, reason?: string) =>
-    correct.mutate(
-      { itemId: item.item_id, ktru_code: code, reason },
-      {
-        onSuccess: (it) =>
-          notifications.show({
-            color: "primary",
-            message: it.status === "confirmed" ? "Код подтверждён" : `Код исправлен на ${code}`,
-          }),
-        onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
-      },
-    );
+// ---------------------------------------------------------------- атрибуты
 
+function Attributes({ item }: { item: Item }) {
+  const x = item.extracted!;
+  const conf = Object.values(x.field_confidence ?? {}).filter((v) => v > 0);
+  const avg = conf.length ? conf.reduce((a, b) => a + b, 0) / conf.length : null;
+  const level = avg == null ? null : avg >= 0.8 ? "высокая" : avg >= 0.6 ? "средняя" : "низкая";
+  const method = x.method === "rules" ? "правила" : x.method === "llm" ? "LLM" : "правила + LLM";
+  const chars = Object.entries(x.characteristics ?? {});
+  const brandModel = [x.brand, x.model].filter(Boolean).join(" · ");
   return (
-    <Stack gap="lg">
-      <Paper withBorder p="md" bg="var(--mantine-color-default-hover)">
-        <Text size="xs" c="dimmed" mb={4}>
-          Текст позиции из файла
-        </Text>
-        <Text>{item.raw_text}</Text>
-        {item.group_id && item.group_size && item.group_size > 1 && (
-          <Text size="xs" c="dimmed" mt={6}>
-            Такой же товар (наименование, бренд и модель) встречается в файле ещё {item.group_size - 1} раз.
-          </Text>
+    <div>
+      <div className={classes.sectT}>
+        <span>Извлечённые атрибуты</span>
+        <span>
+          {method}
+          {level && ` · уверенность ${level}`}
+        </span>
+      </div>
+      <dl className={classes.kv}>
+        <dt>Наименование</dt>
+        <dd>{x.name}</dd>
+        <dt>Бренд / модель</dt>
+        <dd className={brandModel ? undefined : classes.none}>{brandModel || "не найдены"}</dd>
+        {chars.length > 0 && (
+          <>
+            <dt>Характеристики</dt>
+            <dd>{chars.map(([k, v]) => `${k}: ${v}`).join(" · ")}</dd>
+          </>
         )}
-      </Paper>
-
-      {item.status === "pending" && (
-        <Alert color="gray" icon={<Loader size={16} />}>
-          Позиция ещё в очереди. Решение можно будет принять, когда модель предложит код.
-        </Alert>
-      )}
-      {item.error && (
-        <Alert color="red" icon={<IconCircleX />} title="Позицию не удалось обработать">
-          {item.error} Код можно указать вручную ниже.
-        </Alert>
-      )}
-      {item.flags?.map((f) => (
-        <Alert key={f} color="orange" icon={<IconAlertTriangle />} title={FLAG[f].label} variant="light">
-          {FLAG[f].hint}
-        </Alert>
-      ))}
-
-      {item.final?.ktru_code && (
-        <Card padding="md" style={{ borderColor: "var(--mantine-primary-color-light-color)" }}>
-          <Group justify="space-between" wrap="nowrap" align="flex-start">
-            <div>
-              <Text size="xs" c="dimmed">
-                Итоговый код {item.final.source === "user" ? "— выбран человеком" : "— предложен моделью"}
-              </Text>
-              <Group gap="xs" mt={4}>
-                <KtruCode code={item.final.ktru_code} size="lg" />
-                {item.final.source === "user" && (
-                  <Tooltip label="Решение пользователя">
-                    <ThemeIcon size="sm" variant="light" radius="xl">
-                      <IconUser size={12} />
-                    </ThemeIcon>
-                  </Tooltip>
-                )}
-              </Group>
-              <Text fw={500}>{item.final.name}</Text>
-            </div>
-            {item.final.source === "prediction" && <ConfidenceBadge value={item.final.confidence} size="lg" />}
-          </Group>
-        </Card>
-      )}
-
-      {item.predictions.length > 0 && (
-        <Stack gap="sm">
-          <Title order={5}>Варианты модели</Title>
-          {item.predictions.map((p) => (
-            <PredictionCard
-              key={p.rank}
-              p={p}
-              chosen={item.final?.ktru_code === p.ktru_code}
-              onChoose={p.rank > 1 ? () => choose(p.ktru_code, "Выбран вариант модели") : undefined}
-              busy={correct.isPending}
-            />
-          ))}
-        </Stack>
-      )}
-
-      {item.extracted && (
-        <Stack gap="sm">
-          <Group gap="xs">
-            <Title order={5}>Что система поняла из текста</Title>
-            <Badge variant="outline" color="gray" size="sm">
-              {item.extracted.method === "rules"
-                ? "правила"
-                : item.extracted.method === "llm"
-                  ? "LLM"
-                  : "правила + LLM"}
-            </Badge>
-          </Group>
-          <SimpleGrid cols={{ base: 2, xs: 3 }} spacing="xs">
-            <Attr label="Наименование" value={item.extracted.name} conf={item.extracted.field_confidence?.name} />
-            <Attr label="Бренд" value={item.extracted.brand} conf={item.extracted.field_confidence?.brand} />
-            <Attr label="Модель" value={item.extracted.model} conf={item.extracted.field_confidence?.model} />
-            {item.extracted.quantity != null && (
-              <Attr label="Количество" value={`${item.extracted.quantity} ${item.extracted.unit ?? ""}`} />
-            )}
-            {Object.entries(item.extracted.characteristics ?? {}).map(([k, v]) => (
-              <Attr key={k} label={k} value={v} />
-            ))}
-          </SimpleGrid>
-        </Stack>
-      )}
-
-      <Divider />
-      <ManualCode
-        versionId={job.catalog_version_id}
-        disabled={item.status === "pending"}
-        onSave={(code, reason) => choose(code, reason)}
-        saving={correct.isPending}
-      />
-    </Stack>
+      </dl>
+    </div>
   );
 }
 
-function PredictionCard({
-  p,
-  chosen,
-  onChoose,
-  busy,
-}: {
-  p: Prediction;
-  chosen: boolean;
-  onChoose?: () => void;
-  busy: boolean;
-}) {
+// ---------------------------------------------------------------- вариант КТРУ
+
+function Variant({ p, picked, onPick }: { p: Prediction; picked: boolean; onPick: () => void }) {
+  const text = p.rank === 1 ? p.explanation : p.why_not_chosen;
   return (
-    <Card padding="md" bg={chosen ? "var(--mantine-primary-color-light)" : undefined}>
-      <Group justify="space-between" wrap="nowrap" align="flex-start">
-        <Group gap="sm" wrap="nowrap" align="flex-start">
-          <Badge variant="default" circle size="lg">
-            {p.rank}
-          </Badge>
-          <div>
-            <KtruCode code={p.ktru_code} />
-            <Text size="sm" fw={500}>
-              {p.name}
-            </Text>
-            <Text size="xs" c="dimmed">
-              ОКПД2 {p.okpd2_code}
-            </Text>
-          </div>
-        </Group>
-        <ConfidenceBadge value={p.confidence} />
-      </Group>
-      {(p.explanation || p.why_not_chosen) && (
-        <Text size="sm" mt="sm" c={p.rank === 1 ? undefined : "dimmed"}>
-          {p.explanation ?? p.why_not_chosen}
+    <UnstyledButton className={classes.cand} data-picked={picked || undefined} onClick={onPick} aria-pressed={picked}>
+      <span className={classes.rk}>{p.rank}</span>
+      <div style={{ minWidth: 0 }}>
+        <KtruCode code={p.ktru_code} />
+        <Text fw={500} mt={2}>
+          {p.name}
+        </Text>
+      </div>
+      <ConfidenceBadge value={p.confidence} />
+      {!!p.characteristic_matches?.length && (
+        <div className={classes.chars}>
+          {p.characteristic_matches.map((m) => (
+            <CharChip key={m.name} m={m} />
+          ))}
+        </div>
+      )}
+      {text && (
+        <Text className={classes.why}>
+          <b>{p.rank === 1 ? "Пояснение:" : "Почему не первый:"}</b> {text}
         </Text>
       )}
-      {!!p.characteristic_matches?.length && <Matches list={p.characteristic_matches} />}
-      {onChoose && !chosen && (
-        <Group justify="flex-end" mt="sm">
-          <Button size="xs" variant="light" onClick={onChoose} loading={busy}>
-            Выбрать этот код
-          </Button>
-        </Group>
-      )}
-    </Card>
+    </UnstyledButton>
   );
 }
 
-function Matches({ list }: { list: CharacteristicMatch[] }) {
-  const icon = (s: CharacteristicMatch["status"]) =>
-    s === "match" ? (
-      <IconCircleCheck size={16} color="var(--k-hi)" aria-label="совпадает" />
-    ) : s === "mismatch" ? (
-      <IconCircleX size={16} color="var(--k-lo)" aria-label="не совпадает" />
-    ) : (
-      <IconCircleDashed size={16} color="var(--k-mid)" aria-label="не найдено" />
-    );
+function CharChip({ m }: { m: CharacteristicMatch }) {
+  const bad = m.status === "mismatch" || (m.status === "missing" && m.required);
+  const kind = m.status === "match" ? "y" : bad ? "n" : "none";
+  const icon = m.status === "match" ? <IconCheck size={11} /> : bad ? <IconX size={11} /> : "—";
   return (
-    <Table mt="sm" fz="sm" verticalSpacing={4} withRowBorders={false}>
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th>Характеристика КТРУ</Table.Th>
-          <Table.Th>Допустимо</Table.Th>
-          <Table.Th>В позиции</Table.Th>
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {list.map((m) => (
-          <Table.Tr key={m.name}>
-            <Table.Td>
-              <Group gap={6} wrap="nowrap">
-                {icon(m.status)}
-                <span>
-                  {m.name}
-                  {m.required && (
-                    <Text span c="red" title="Обязательная характеристика">
-                      {" "}
-                      *
-                    </Text>
-                  )}
-                </span>
-              </Group>
-            </Table.Td>
-            <Table.Td c="dimmed">{m.expected ?? "—"}</Table.Td>
-            <Table.Td>
-              {m.found ?? (
-                <Text span c="orange.7" size="sm">
-                  не указано
-                </Text>
-              )}
-            </Table.Td>
-          </Table.Tr>
-        ))}
-      </Table.Tbody>
-    </Table>
+    <span className={classes.cm} data-kind={kind} title={m.expected ? `Допустимо по КТРУ: ${m.expected}` : undefined}>
+      {icon} {m.name}: {m.found ?? "не указан"}
+      {m.required && m.status !== "match" && " · обязательная"}
+    </span>
   );
 }
 
-function Attr({ label, value, conf }: { label: string; value: string | null | undefined; conf?: number }) {
-  const low = conf != null && conf > 0 && conf < 0.6;
-  return (
-    <Box>
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-      <Text size="sm" fw={500} c={value ? (low ? "orange.7" : undefined) : "dimmed"}>
-        {value || "не найдено"}
-      </Text>
-    </Box>
-  );
-}
+// ---------------------------------------------------------------- ручная правка
 
 function ManualCode({
+  item,
   versionId,
   disabled,
   onSave,
-  saving,
+  onCancel,
 }: {
+  item: Item;
   versionId: string;
   disabled: boolean;
-  onSave: (code: string, reason: string) => void;
-  saving: boolean;
+  onSave: (code: string, name: string, reason: string) => void;
+  onCancel?: () => void;
 }) {
-  const [search, setSearch] = useState("");
-  const [debounced] = useDebouncedValue(search, 250);
+  const [q, setQ] = useState(item.extracted?.name ?? "");
+  const [debounced] = useDebouncedValue(q, 300);
   const [code, setCode] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const { data, isFetching } = useCatalogSearch(debounced, versionId);
-  const options = (data?.items ?? []).map((c) => ({ value: c.ktru_code, label: `${c.ktru_code} — ${c.name}` }));
+  const search = useCatalogSearch(debounced, versionId);
+  const details = useCatalogItem(code, versionId);
+  const found = search.data?.items ?? [];
+  const picked = found.find((c) => c.ktru_code === code);
 
   return (
-    <Stack gap="sm">
-      <Title order={5}>Указать код вручную</Title>
-      <Select
-        placeholder="Начните вводить код или наименование"
-        searchable
-        searchValue={search}
-        onSearchChange={setSearch}
-        data={options}
-        value={code}
-        onChange={setCode}
-        filter={({ options }) => options}
-        nothingFoundMessage={
-          debounced.length >= 2 ? (isFetching ? "Ищем…" : "Ничего не найдено") : "Введите хотя бы 2 символа"
-        }
-        rightSection={isFetching ? <Loader size={14} /> : undefined}
-        disabled={disabled}
-        clearable
-        comboboxProps={{ withinPortal: true, zIndex: 400 }}
-      />
-      <Textarea
-        placeholder="Почему исправлено (необязательно) — попадёт в журнал решений"
-        value={reason}
-        onChange={(e) => setReason(e.currentTarget.value)}
-        maxLength={500}
-        autosize
-        minRows={1}
-        disabled={disabled}
-      />
-      <Group justify="flex-end">
-        <Button
-          variant="light"
-          disabled={!code || disabled}
-          loading={saving}
-          onClick={() => {
-            if (!code) return;
-            onSave(code, reason);
-            setCode(null);
-            setSearch("");
-            setReason("");
-          }}
-        >
-          Сохранить код
-        </Button>
-      </Group>
-    </Stack>
+    <div>
+      <div className={classes.sectT}>
+        <span>Найти код в каталоге</span>
+        {onCancel && (
+          <UnstyledButton className={classes.link} onClick={onCancel} fz={12}>
+            скрыть
+          </UnstyledButton>
+        )}
+      </div>
+      <Stack gap="sm">
+        <TextInput
+          placeholder="Начало кода или слово из названия"
+          leftSection={<IconSearch size={16} />}
+          rightSection={search.isFetching ? <Loader size={14} /> : undefined}
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+          disabled={disabled}
+        />
+        {debounced.trim().length < 2 ? (
+          <Text size="sm" c="dimmed">
+            Введите хотя бы 2 символа. Ищем только в версии каталога этой задачи.
+          </Text>
+        ) : search.isError ? (
+          <Text size="sm" c="var(--k-lo)">
+            {(search.error as Error).message}
+          </Text>
+        ) : found.length === 0 && !search.isFetching ? (
+          <Text size="sm" c="dimmed">
+            Ничего не нашлось. Попробуйте начало кода ОКПД2 или другое слово.
+          </Text>
+        ) : (
+          <Stack gap={6}>
+            {found.map((c) => (
+              <UnstyledButton
+                key={c.ktru_code}
+                className={classes.result}
+                data-picked={code === c.ktru_code || undefined}
+                onClick={() => setCode(c.ktru_code === code ? null : c.ktru_code)}
+              >
+                <KtruCode code={c.ktru_code} />
+                <Text size="sm">{c.name}</Text>
+                {code === c.ktru_code && (
+                  <Box mt={6}>
+                    {details.isLoading ? (
+                      <Skeleton h={18} />
+                    ) : details.data?.characteristics?.length ? (
+                      <Text size="xs" c="dimmed">
+                        {details.data.characteristics
+                          .map((ch) => `${ch.name}${ch.required ? "*" : ""}: ${ch.values.join(", ")}`)
+                          .join(" · ")}
+                      </Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        Характеристик у кода нет.
+                      </Text>
+                    )}
+                  </Box>
+                )}
+              </UnstyledButton>
+            ))}
+          </Stack>
+        )}
+        <Textarea
+          placeholder="Почему исправлено — необязательно, попадёт в журнал решений"
+          value={reason}
+          onChange={(e) => setReason(e.currentTarget.value)}
+          maxLength={500}
+          autosize
+          minRows={1}
+          disabled={disabled}
+        />
+        <Group justify="flex-end">
+          <Button
+            variant="default"
+            disabled={!picked || disabled}
+            onClick={() => picked && onSave(picked.ktru_code, picked.name, reason)}
+          >
+            {picked ? `Сохранить код ${picked.ktru_code}` : "Выберите код из списка"}
+          </Button>
+        </Group>
+      </Stack>
+    </div>
   );
 }

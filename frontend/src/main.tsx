@@ -15,6 +15,7 @@ import { RouterProvider } from "react-router";
 import { router } from "./router";
 import { cssVariablesResolver, theme } from "./theme";
 import { ApiRequestError } from "./api/client";
+import { DecisionQueueProvider } from "./components/DecisionQueue";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,7 +34,9 @@ createRoot(document.getElementById("root")!).render(
       <Notifications position="bottom-center" />
       <QueryClientProvider client={queryClient}>
         <ModalsProvider labels={{ confirm: "OK", cancel: "Отмена" }}>
-          <RouterProvider router={router} />
+          <DecisionQueueProvider>
+            <RouterProvider router={router} />
+          </DecisionQueueProvider>
         </ModalsProvider>
       </QueryClientProvider>
     </MantineProvider>
