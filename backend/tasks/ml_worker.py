@@ -2,7 +2,8 @@
 
 Конвейер загружается один раз в каждом дочернем процессе — после fork, иначе соединения и потоки библиотек
 делились бы между процессами. Затем процесс раз в ML_HEARTBEAT_INTERVAL_S пишет в Redis свою готовность
-(её читает GET /health) и режим работы (его отдаёт GET /config).
+(её читает GET /health) и режим работы (его отдаёт GET /config). Перед каждой пачкой процесс досылает
+в конвейер новые подтверждённые примеры (processing.ExampleFeed, FR-4.7).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from redis import Redis
 from backend.core import processing
 from backend.core.db import worker_engine
 from backend.core.logs import job_id_var
-from backend.core.ml import describe_mode, load_pipeline
+from backend.core.ml import load_pipeline, pipeline_mode
 from backend.core.queue import PROCESS_CHUNK
 from backend.core.readiness import Heartbeat
 
@@ -37,7 +38,7 @@ CHUNK_FAILED = "Не удалось обработать позицию за н�
 # Загрузка моделей идёт в worker_process_init, а Celery по умолчанию ждёт старта дочернего процесса 4 с.
 app.conf.worker_proc_alive_timeout = settings.ml_worker_init_timeout_s
 
-_state: dict[str, Any] = {"pipeline": None, "error": None, "heartbeat": None}
+_state: dict[str, Any] = {"pipeline": None, "error": None, "heartbeat": None, "examples": processing.ExampleFeed()}
 
 
 def get_pipeline() -> Any:
@@ -57,7 +58,9 @@ def process_chunk(self: Task, job_id: str, item_ids: list[str]) -> None:
         pipeline = get_pipeline()
         if pipeline is None:
             raise RuntimeError("Конвейер не загружен")
-        processing.process_chunk(worker_engine(settings), settings, pipeline, job_uuid, item_uuids)
+        processing.process_chunk(
+            worker_engine(settings), settings, pipeline, job_uuid, item_uuids, examples=_state["examples"]
+        )
     except Exception as exc:
         attempt = self.request.retries
         if attempt < len(RETRY_DELAYS_S):
@@ -106,7 +109,7 @@ def _payload() -> dict[str, Any]:
         "models": bool(ready.get("models")),
         "catalog": bool(ready.get("catalog")),
         "pipeline": settings.pipeline,
-        "mode": describe_mode(settings),
+        "mode": pipeline_mode(pipeline, settings),
         "error": _state["error"],
         "host": socket.gethostname(),
         "pid": os.getpid(),

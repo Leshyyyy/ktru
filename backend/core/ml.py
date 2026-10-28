@@ -39,13 +39,27 @@ def load_pipeline(settings: Settings) -> Pipeline:
     return get_pipeline()
 
 
+def pipeline_mode(pipeline: object | None, settings: Settings) -> dict[str, object]:
+    """Режим для GET /config, который worker-ml кладёт в heartbeat. Конвейер, который умеет сообщить режим сам
+    (describe_mode() — необязательный метод, не часть контракта), знает его точнее: умолчания не дублируются.
+    """
+    describe = getattr(pipeline, "describe_mode", None)
+    if callable(describe):
+        try:
+            return dict(describe())
+        except Exception:
+            log.exception("Pipeline.describe_mode() упал, режим — по переменным окружения")
+    return describe_mode(settings)
+
+
 def describe_mode(settings: Settings, environ: Mapping[str, str] = os.environ) -> dict[str, object]:
-    """Режим для GET /config. Переменные и умолчания — из docs/analytics/07-ml.md; llm_enabled считается так же,
-    как в ml/config.py. Считает worker-ml (у него есть ключ LLM), API получает результат через Redis.
+    """Режим по переменным окружения — когда конвейер не сообщает его сам. Умолчания и llm_enabled — как
+    в ml/config.py (EXTRACTOR=rules, RERANKER=none). API берёт режим у worker-ml через Redis: только у него
+    есть ключ LLM; сам считает его, лишь пока воркера нет.
     """
     if settings.pipeline == "stub":
         return {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False}
-    reranker = _choice(environ, "RERANKER", _RERANKERS, "cross_encoder")
+    reranker = _choice(environ, "RERANKER", _RERANKERS, "none")
     has_key = bool(environ.get("LLM_API_KEY", "").strip())
     has_url = bool(environ.get("LLM_BASE_URL", "").strip())
     llm_enabled = has_key and (has_url or reranker == "llm")
@@ -54,7 +68,7 @@ def describe_mode(settings: Settings, environ: Mapping[str, str] = os.environ) -
     if (reranker == "llm" and not has_key) or (reranker == "cross_encoder" and not _installed("sentence_transformers")):
         reranker = "none"
     return {
-        "extractor": _choice(environ, "EXTRACTOR", _EXTRACTORS, "hybrid"),
+        "extractor": _choice(environ, "EXTRACTOR", _EXTRACTORS, "rules"),
         "reranker": reranker,
         "device": _choice(environ, "DEVICE", _DEVICES, "cpu"),
         "llm_enabled": llm_enabled,

@@ -15,11 +15,11 @@
 | `core/settings.py` | все переменные окружения (`Settings`); список с пояснениями — `.env.example` |
 | `core/models.py` | SQLAlchemy-модели таблиц `schema.sql` (схему создают миграции, не модели) |
 | `core/catalog.py` | импорт каталога из JSONL (`CatalogRow`) — для migrate и будущего `POST /catalog/import` |
-| `core/ml.py` | `load_pipeline()` (stub/real), `describe_mode()`, `check_results()` — проверка ответа ML по контракту |
+| `core/ml.py` | `load_pipeline()` (stub/real), `pipeline_mode()` / `describe_mode()` — режим для `/config` (у конвейера, иначе по переменным), `check_results()` — проверка ответа ML по контракту |
 | `core/readiness.py` | готовность worker-ml в Redis (heartbeat с TTL) |
 | `core/uploads.py` | хранилище файлов на томе uploads (`<file_id>.<расширение>`), очистка имени, ошибки `backend/files` → код и текст для человека |
 | `core/queue.py` | постановка задач по имени (`io.parse_file`, `ml.process_chunk`); в тестах — `FakeQueue` из `tests/conftest.py` |
-| `core/processing.py` | работа воркеров: разбор → items, пачки по 50 через ML → predictions, итоговый статус, watchdog; цвет и статус по порогам |
+| `core/processing.py` | работа воркеров: разбор → items, пачки по 50 через ML → predictions, итоговый статус, watchdog; цвет и статус по порогам; `ExampleFeed` — досылка подтверждённых примеров в конвейер перед пачкой (FR-4.7) |
 | `tasks/celery_app.py` | Celery: `create_celery(settings)`, очереди `io`/`ml`, JSON, `acks_late`, лимиты, beat |
 | `tasks/jobs.py`, `tasks/watchdog.py` | задачи io: `io.parse_file`, `io.watchdog`; логика — в `core/processing.py` |
 | `tasks/ml_worker.py` | вход worker-ml: загрузка конвейера, готовность, `ml.process_chunk` с ретраями 5/20/60 с |
@@ -63,7 +63,7 @@ services:
 - Ошибки — только `raise ApiError(...)` (или `not_found`, `invalid_state`, `not_ready`); `HTTPException` не бросаем. `message` — по-русски, для человека, без внутренних подробностей.
 - Эндпоинты синхронные (`def`), один драйвер psycopg 3 — и в API, и в воркерах.
 - Схема меняется только новой ревизией Alembic вместе с PR в `contracts/schema.sql`; тест `test_migrations_match_contract` сверяет их.
-- Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каждый ответ ML проходит `check_results()`.
+- Из `ml/` импортируется только `ml.pipeline.get_pipeline()` (через `core/ml.py`); каждый ответ ML проходит `check_results()`. Методы конвейера сверх контракта (`add_examples`, `describe_mode`) вызываются только через `getattr`: у заглушки их нет.
 - Аргументы задач Celery — только JSON-типы (id, строки); воркер меняет позиции только `WHERE status = 'pending'`.
 - Переход статуса задачи — один `UPDATE ... WHERE status IN (...)`: повторная доставка, гонка двух воркеров, отмена и удаление посреди работы не должны ломать состояние (тесты — `tests/test_processing.py`).
 - Решения только добавляются в `decisions`; итоговый код — `v_item_final`. Ручное решение (`via = manual`) пишет пример в `confirmed_examples` (upsert по `source_item_id`, `norm_text` — только `normalize_text`), массовое (`via = bulk`) — нет. Повтор того же ручного решения не создаёт новой строки.

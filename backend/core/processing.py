@@ -12,7 +12,7 @@ import math
 import struct
 import uuid
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -25,7 +25,7 @@ from contracts.ml_contracts import ClassificationResult, Pipeline, PipelineOptio
 from contracts.ml_contracts import Prediction as MlPrediction
 
 from .ml import check_results
-from .models import CatalogItem, Item, Job, Prediction, SourceFile
+from .models import CatalogItem, ConfirmedExample, Item, Job, Prediction, SourceFile
 from .queue import TaskQueue
 from .settings import Settings
 from .uploads import file_error
@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 CHUNK_SIZE = 50
 STALE_AFTER = timedelta(minutes=5)
+EXAMPLES_OVERLAP = timedelta(minutes=1)  # см. ExampleFeed
 ACTIVE_STATUSES = ("queued", "parsing", "processing")
 JOB_ERROR_CODES = ("file_unreadable", "mapping_invalid", "limit_exceeded", "internal_error")
 NOTHING_PROCESSED = "Не удалось обработать ни одной позиции. Повторите обработку позже."
@@ -175,8 +176,41 @@ def raw_columns(mapping: dict[str, Any], raw_row: Sequence[Any]) -> dict[str, st
     return {role: " ".join(values) for role, values in parts.items()}
 
 
+class ExampleFeed:
+    """Подтверждённые примеры для конвейера (FR-4.7): перед пачкой досылает в Pipeline.add_examples пары
+    «текст → код» из confirmed_examples, появившиеся с прошлого раза. Один экземпляр на процесс worker-ml.
+
+    Отметка — created_at последнего отправленного примера; смена кода примера сдвигает created_at (routes/items.py).
+    created_at = now() — время начала транзакции, поэтому пример может появиться в таблице позже соседа с бо́льшим
+    created_at. Окно EXAMPLES_OVERLAP присылает такие пары повторно: повтор текста в конвейере заменяет код.
+    """
+
+    def __init__(self) -> None:
+        self.since: datetime | None = None
+
+    def push(self, engine: Engine, pipeline: Pipeline) -> int:
+        add_examples = getattr(pipeline, "add_examples", None)  # не часть контракта: у заглушки его нет
+        if add_examples is None:
+            return 0
+        query = select(ConfirmedExample.text, ConfirmedExample.ktru_code, ConfirmedExample.created_at)
+        if self.since is not None:
+            query = query.where(ConfirmedExample.created_at > self.since - EXAMPLES_OVERLAP)
+        with engine.connect() as conn:
+            rows = conn.execute(query.order_by(ConfirmedExample.created_at, ConfirmedExample.id)).all()
+        if rows:
+            # По возрастанию created_at: у одинаковых текстов побеждает последнее решение.
+            add_examples([(row.text, row.ktru_code) for row in rows])
+            self.since = rows[-1].created_at
+        return len(rows)
+
+
 def process_chunk(
-    engine: Engine, settings: Settings, pipeline: Pipeline, job_id: uuid.UUID, item_ids: Sequence[uuid.UUID]
+    engine: Engine,
+    settings: Settings,
+    pipeline: Pipeline,
+    job_id: uuid.UUID,
+    item_ids: Sequence[uuid.UUID],
+    examples: ExampleFeed | None = None,
 ) -> None:
     """Пачка → Pipeline.classify_batch → items и predictions. Исключение конвейера уходит наверх: ретраи
     делает задача Celery, а после последней попытки позиции помечает fail_chunk.
@@ -197,6 +231,8 @@ def process_chunk(
         finish_if_complete(engine, job_id)
         return
 
+    if examples is not None:
+        examples.push(engine, pipeline)
     raw = [RawItem(item_id=str(i.id), text=i.raw_text, columns=raw_columns(mapping, i.raw_row)) for i in items]
     results = pipeline.classify_batch(
         raw,

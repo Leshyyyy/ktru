@@ -15,3 +15,8 @@ backend/files/tests
 backend/requirements*.in
 backend/requirements-dev.txt
 ml/tests
+
+# Локальные ключи и отчёты ML — не в образ (иначе ключ LLM с машины разработчика попадёт в образ)
+ml/.env
+ml/artifacts
+**/.env

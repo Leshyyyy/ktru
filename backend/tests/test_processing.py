@@ -166,6 +166,52 @@ def test_items_go_to_ml_in_chunks_of_50(stack: Stack) -> None:
     assert (first.raw_text, first.raw_row) == ("Товар номер 0", ["Товар номер 0", "", "1", "шт"])
 
 
+class LearningPipeline(StubPipeline):
+    """Заглушка с необязательным add_examples, как у конвейера ML (FR-4.7): запоминает присланные пары."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.examples: dict[str, str] = {}
+        self.calls = 0
+
+    def add_examples(self, pairs: list[tuple[str, str]]) -> int:
+        self.calls += 1
+        self.examples.update(pairs)
+        return len(pairs)
+
+
+@pytest.mark.db
+def test_confirmed_examples_reach_pipeline(stack: Stack, monkeypatch: pytest.MonkeyPatch) -> None:
+    job = stack.finished_job(ROWS)
+    items = stack.client.get(f"/api/v1/jobs/{job['job_id']}/items").json()["items"]
+    laptop, printer, paper = items
+    stack.client.post(f"/api/v1/items/{laptop['item_id']}/confirm")
+    stack.client.put(f"/api/v1/items/{printer['item_id']}/decision", json={"ktru_code": "99.99.04.000-00000001"})
+    stack.client.post(f"/api/v1/jobs/{job['job_id']}/confirm-bulk", json={"min_confidence": 0})  # bulk — не пример
+
+    feed, pipeline = processing.ExampleFeed(), LearningPipeline()
+    assert feed.push(stack.engine, StubPipeline()) == 0  # у заглушки add_examples нет — ничего не делаем
+    other = _job(stack)
+    [chunk] = stack.parse_only(other)
+    processing.process_chunk(
+        stack.engine, stack.settings, pipeline, uuid.UUID(chunk[0]), [uuid.UUID(i) for i in chunk[1]], examples=feed
+    )
+    assert pipeline.examples == {
+        laptop["raw_text"]: laptop["predictions"][0]["ktru_code"],
+        printer["raw_text"]: "99.99.04.000-00000001",
+    }
+    assert paper["raw_text"] not in pipeline.examples
+    assert _job_row(stack, other).status == "done"
+
+    # В окне перекрытия пары приходят повторно; без окна — только изменившиеся.
+    assert feed.push(stack.engine, pipeline) == 2
+    monkeypatch.setattr(processing, "EXAMPLES_OVERLAP", timedelta(0))
+    assert feed.push(stack.engine, pipeline) == 0
+    stack.client.put(f"/api/v1/items/{printer['item_id']}/decision", json={"ktru_code": "99.99.03.000-00000001"})
+    assert feed.push(stack.engine, pipeline) == 1
+    assert pipeline.examples[printer["raw_text"]] == "99.99.03.000-00000001"
+
+
 @pytest.mark.db
 def test_repeated_chunk_changes_nothing(stack: Stack) -> None:
     job_id = _job(stack)
