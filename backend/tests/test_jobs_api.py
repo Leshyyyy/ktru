@@ -62,7 +62,7 @@ def test_job_is_processed_end_to_end(stack: Stack) -> None:
 
     items = _items(stack, job["job_id"])["items"]
     assert [i["row_index"] for i in items] == [0, 1, 2, 3]
-    assert items[0]["raw_text"] == 'Ноутбук Lenovo IdeaPad 3 15IAU7 15.6", Core i5, 16 ГБ'
+    assert items[0]["raw_text"] == 'Ноутбук Lenovo IdeaPad 3 15IAU7; 15.6", Core i5, 16 ГБ'
     for item in items[:3]:
         top = item["predictions"][0]
         assert item["status"] == ("processed" if item["band"] == "green" else "needs_review")
