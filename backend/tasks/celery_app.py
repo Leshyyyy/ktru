@@ -48,7 +48,10 @@ def create_celery(settings: Settings) -> Celery:
         worker_send_task_events=False,
         timezone="UTC",
         enable_utc=True,
-        beat_schedule={"watchdog": {"task": "io.watchdog", "schedule": 60.0}},
+        beat_schedule={
+            "watchdog": {"task": "io.watchdog", "schedule": 60.0},
+            "cleanup-uploads": {"task": "io.cleanup_uploads", "schedule": 3600.0},
+        },
     )
     return celery
 

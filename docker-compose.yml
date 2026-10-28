@@ -196,8 +196,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
+      UPLOAD_TTL_HOURS:
     volumes:
-      - uploads:/data/uploads:ro
+      # Запись — для уборки файлов без задачи (io.cleanup_uploads).
+      - uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"io@$${HOSTNAME}\" --timeout 10"]
       interval: 30s

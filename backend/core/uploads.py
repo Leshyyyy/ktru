@@ -1,4 +1,5 @@
-"""Загруженные спецификации: хранилище на томе uploads (api пишет, worker-io только читает) и ошибки разбора.
+"""Загруженные спецификации: хранилище на томе uploads (api пишет, worker-io читает и убирает старые файлы
+без задачи) и ошибки разбора.
 
 Файл лежит под именем <file_id>.<расширение>: имя от пользователя не участвует в пути, а расширение нужно
 backend/files — формат он определяет по нему. В source_files.storage_path пишется имя относительно UPLOAD_DIR.
@@ -12,10 +13,15 @@ import os
 import unicodedata
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from sqlalchemy import Engine, delete, exists, select
+
 from backend.files import FileParsingError
+
+from .models import Job, SourceFile
 
 log = logging.getLogger(__name__)
 
@@ -96,3 +102,37 @@ def remove_upload(upload_dir: Path, storage_path: str) -> None:
         (upload_dir / storage_path).unlink(missing_ok=True)
     except OSError:
         log.warning("Не удалось удалить загруженный файл", extra={"storage_path": storage_path}, exc_info=True)
+
+
+def cleanup_uploads(engine: Engine, upload_dir: Path, max_age: timedelta) -> int:
+    """Уборка тома uploads (раз в час, io.cleanup_uploads). → сколько файлов удалено.
+
+    - Файлы, по которым за max_age так и не создали задачу: запись source_files и сам файл. Файлы задач
+      удаляет DELETE /jobs/{id}, когда на файл больше не ссылается ни одна задача.
+    - Файлы без записи в базе и недокачанные .part старше max_age: процесс упал между записью файла и вставкой.
+    """
+    cutoff = datetime.now(UTC) - max_age
+    with engine.begin() as conn:
+        orphaned = conn.scalars(
+            delete(SourceFile)
+            .where(SourceFile.created_at < cutoff, ~exists().where(Job.file_id == SourceFile.id))
+            .returning(SourceFile.storage_path)
+        ).all()
+        known = set(conn.scalars(select(SourceFile.storage_path)).all())
+    for storage_path in orphaned:
+        remove_upload(upload_dir, storage_path)
+    removed = len(orphaned)
+    if upload_dir.is_dir():
+        for path in upload_dir.iterdir():
+            if path.name in known or not path.is_file():
+                continue
+            try:
+                stale = datetime.fromtimestamp(path.stat().st_mtime, UTC) < cutoff
+            except OSError:
+                continue
+            if stale:
+                remove_upload(upload_dir, path.name)
+                removed += 1
+    if removed:
+        log.info("Убраны загруженные файлы без задачи", extra={"count": removed})
+    return removed
