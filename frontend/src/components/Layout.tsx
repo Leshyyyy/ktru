@@ -84,7 +84,7 @@ function Logo() {
         <rect x="1" y="14" width="11" height="11" rx="3" fill="#DCEFE9" stroke="#BFE3D8" />
         <rect x="14" y="14" width="11" height="11" rx="3" fill="#0E6B5C" opacity=".55" />
       </svg>
-      <Text fw={700} size="md" visibleFrom="xs" style={{ letterSpacing: "-0.01em" }}>
+      <Text fw={600} size="md" visibleFrom="xs" style={{ letterSpacing: "-0.01em" }}>
         Классификатор КТРУ
       </Text>
     </UnstyledButton>
@@ -151,7 +151,7 @@ function SystemNotReady() {
     return (
       <Box className={classes.page} pb={0}>
         <Alert color="yellow" title="Система готовится: загружаются модели">
-          Обычно это занимает до минуты — страница обновится сама.
+          Обычно это занимает до минуты. Страница обновится сама.
         </Alert>
       </Box>
     );

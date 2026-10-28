@@ -40,7 +40,7 @@ export const FLAG: Record<ItemFlag, { label: string; short: string; hint: string
   archived_code: {
     label: "Код в архиве",
     short: "код в архиве каталога",
-    hint: "Код помечен в каталоге как архивный — подберите действующий.",
+    hint: "Код помечен в каталоге как архивный. Подберите действующий.",
   },
   low_extraction_confidence: {
     label: "Атрибуты распознаны неуверенно",

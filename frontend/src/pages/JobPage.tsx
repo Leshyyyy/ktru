@@ -272,6 +272,8 @@ function JobView({ job }: { job: Job }) {
       <Card p={0}>
         <Group p="md" gap="sm" wrap="wrap">
           <TextInput
+            id="items-search"
+            aria-label="Поиск по тексту позиции"
             placeholder="Поиск по тексту позиции"
             leftSection={<IconSearch size={16} />}
             value={q}
@@ -330,7 +332,7 @@ function JobView({ job }: { job: Job }) {
           )}
           {!split && (
             <Text size="xs" c="var(--k-faint)" ml="auto" visibleFrom="md">
-              <Kbd size="xs">J</Kbd> <Kbd size="xs">K</Kbd> — по строкам, <Kbd size="xs">Enter</Kbd> — открыть и
+              <Kbd size="sm">J</Kbd> <Kbd size="sm">K</Kbd> переход по строкам, <Kbd size="sm">Enter</Kbd> открыть и
               подтвердить
             </Text>
           )}
@@ -370,7 +372,7 @@ function JobView({ job }: { job: Job }) {
         {list && list.total > PAGE_SIZE && (
           <Group justify="space-between" p="md">
             <Text size="sm" c="dimmed">
-              Показаны {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, list.total)} из {list.total}
+              Показаны с {(page - 1) * PAGE_SIZE + 1} по {Math.min(page * PAGE_SIZE, list.total)} из {list.total}
             </Text>
             <Pagination
               value={page}
@@ -403,7 +405,7 @@ function ProgressCard({ job }: { job: Job }) {
   const done = job.processed_items + job.failed_items;
   const label =
     job.status === "queued"
-      ? "Задача в очереди — сейчас начнётся"
+      ? "Задача в очереди, сейчас начнётся"
       : job.status === "parsing"
         ? "Читаем файл и считаем позиции"
         : `Обработано ${done} из ${job.total_items}`;
@@ -423,7 +425,7 @@ function ProgressCard({ job }: { job: Job }) {
           striped
         />
         <Text size="xs" c="dimmed">
-          Вкладку можно закрыть — обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно
+          Вкладку можно закрыть: обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно
           проверять сразу.
         </Text>
       </Stack>
@@ -465,7 +467,8 @@ function Summary({
           key={x.key}
           active={band === x.key}
           onClick={() => onBand(band === x.key ? null : x.key)}
-          color={`var(--k-${x.key === "green" ? "hi" : x.key === "yellow" ? "mid" : "lo"})`}
+          color={`var(--k-${ZONE[x.key]})`}
+          ink={`var(--k-${ZONE[x.key]}-ink)`}
           label={x.label}
           value={x.value}
           hint={`${BAND[x.key].hint}: ${x.hint}`}
@@ -483,20 +486,25 @@ function Summary({
   );
 }
 
+const ZONE: Record<Band, "hi" | "mid" | "lo"> = { green: "hi", yellow: "mid", red: "lo" };
+
 function Tile(p: {
   active: boolean;
   onClick: () => void;
+  /** Цвет зоны для квадратика-метки. */
   color?: string;
+  /** Цвет числа: тёмный вариант зоны, чтобы контраст был не ниже 4.5:1. */
+  ink?: string;
   label: string;
   value: number;
   hint?: string;
 }) {
   const body = (
     <UnstyledButton onClick={p.onClick} aria-pressed={p.active} className="k-tile" data-active={p.active || undefined}>
-      <Text fz={24} fw={700} className="tabular" lh={1.2} c={p.color}>
+      <Text fz={24} fw={600} className="tabular" lh={1.2} c={p.ink ?? p.color}>
         {p.value}
       </Text>
-      <Group gap={7} wrap="nowrap">
+      <Group gap={8} wrap="nowrap">
         {p.color && <Box w={9} h={9} style={{ borderRadius: 3, background: p.color, flex: "none" }} />}
         <Text size="sm" c="dimmed">
           {p.label}
@@ -608,14 +616,14 @@ function ItemsTable({
                     {it.row_index + 1}
                   </Text>
                 </Table.Td>
-                <Table.Td style={{ minWidth: 0 }}>
-                  <Text size="sm" lineClamp={1}>
-                    {it.raw_text}
-                  </Text>
-                  <Text size="xs" c="dimmed" mt={2} component="div">
+                <Table.Td style={{ overflowWrap: "anywhere" }}>
+                  {/* Текст позиции не обрезаем: по нему проверяют код. Рядом с карточкой (там он целиком)
+                      строка короче: только извлечённые наименование, бренд и модель. */}
+                  {!(compact && it.extracted) && <Text size="sm">{it.raw_text}</Text>}
+                  <Text size={compact ? "sm" : "xs"} c="dimmed" mt={compact ? 0 : 2} component="div">
                     {it.extracted && (
                       <>
-                        <Text span size="xs" fw={600} c="var(--k-ink)">
+                        <Text span inherit fw={600} c="var(--k-ink)">
                           {it.extracted.name}
                         </Text>
                         {[it.extracted.brand, it.extracted.model].filter(Boolean).map((v) => ` · ${v}`)}
@@ -641,7 +649,7 @@ function ItemsTable({
                       ожидает обработки
                     </Text>
                   ) : it.status === "failed" && !it.final?.ktru_code ? (
-                    <Text size="sm" c="var(--k-lo)">
+                    <Text size="sm" c="var(--k-lo-ink)">
                       {it.error ?? "Ошибка обработки"}
                     </Text>
                   ) : (
@@ -654,7 +662,7 @@ function ItemsTable({
                           </Tooltip>
                         )}
                       </Group>
-                      <Text size="xs" c="dimmed" lineClamp={1} mt={2}>
+                      <Text size="xs" c="dimmed" mt={2}>
                         {it.final?.name}
                       </Text>
                     </div>
@@ -805,7 +813,7 @@ function ExportMenu({ job, disabled, emphasis }: { job: Job; disabled: boolean; 
   const formats = useMemo(
     () =>
       [
-        { f: "source", label: "Как исходный файл", hint: "тот же формат, для pdf — xlsx" },
+        { f: "source", label: "Как исходный файл", hint: "тот же формат; pdf выгрузим в xlsx" },
         { f: "xlsx", label: "Excel (xlsx)" },
         { f: "csv", label: "CSV" },
         { f: "json", label: "JSON" },
@@ -821,7 +829,7 @@ function ExportMenu({ job, disabled, emphasis }: { job: Job; disabled: boolean; 
             color: unreviewed ? "yellow" : "primary",
             title: "Файл выгружен",
             message: unreviewed
-              ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком — они помечены в колонке «Источник».`
+              ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком. Они помечены в колонке «Источник».`
               : "Все позиции проверены.",
           }),
         onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),

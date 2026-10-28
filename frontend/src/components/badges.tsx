@@ -1,4 +1,4 @@
-import { Badge, Group, Text, Tooltip } from "@mantine/core";
+import { Group, Text, Tooltip } from "@mantine/core";
 import { IconAlertTriangle, IconCheck } from "@tabler/icons-react";
 import type { ItemFlag, ItemStatus, JobStatus } from "../api/types";
 import { useConfig } from "../api/hooks";
@@ -28,7 +28,7 @@ export function ConfidenceBadge({
   if (!band || value == null)
     return (
       <Text c="dimmed" size="sm">
-        —
+        нет оценки
       </Text>
     );
   const b = BAND[band];
@@ -44,12 +44,22 @@ export function ConfidenceBadge({
   );
 }
 
+/** Тон плашки статуса задачи: те же цвета, что у статусов позиций, текст — тёмным оттенком (контраст ≥ 4.5:1). */
+const JOB_TONE: Record<JobStatus, "neutral" | "busy" | "ok" | "warn" | "bad"> = {
+  queued: "neutral",
+  parsing: "busy",
+  processing: "busy",
+  done: "ok",
+  done_with_errors: "warn",
+  failed: "bad",
+  cancelled: "neutral",
+};
+
 export function JobStatusBadge({ status }: { status: JobStatus }) {
-  const s = JOB_STATUS[status];
   return (
-    <Badge color={s.color} variant="light" tt="none" size="md" fw={600}>
-      {s.label}
-    </Badge>
+    <span className={classes.st} data-tone={JOB_TONE[status]}>
+      {JOB_STATUS[status].label}
+    </span>
   );
 }
 
@@ -116,7 +126,7 @@ export function GroupBadge({ size, onClick }: { size: number; onClick?: () => vo
  * и так это сразу видно.
  */
 export function KtruCode({ code, size = "md" }: { code: string | null | undefined; size?: "md" | "lg" }) {
-  if (!code) return <Text c="dimmed">—</Text>;
+  if (!code) return <Text c="dimmed">нет кода</Text>;
   const i = code.indexOf("-");
   const head = i >= 0 ? code.slice(0, i) : code;
   const tail = i >= 0 ? code.slice(i) : "";

@@ -70,10 +70,8 @@ export function JobsPage() {
                 ))}
               {data?.items.map((job) => (
                 <Table.Tr key={job.job_id} className="row-clickable" onClick={() => navigate(`/jobs/${job.job_id}`)}>
-                  <Table.Td>
-                    <Text fw={500} lineClamp={1}>
-                      {job.filename}
-                    </Text>
+                  <Table.Td style={{ overflowWrap: "anywhere" }}>
+                    <Text fw={500}>{job.filename}</Text>
                     <Text size="xs" c="dimmed">
                       {job.total_items
                         ? `${job.total_items} ${plural(job.total_items, "позиция", "позиции", "позиций")}`
@@ -107,7 +105,7 @@ export function JobsPage() {
             <Stack align="center" gap="xs">
               <Text fw={500}>Задач пока нет</Text>
               <Text size="sm" c="dimmed">
-                Загрузите первую спецификацию — она появится здесь.
+                Загрузите первую спецификацию, и она появится здесь.
               </Text>
               <Button component={Link} to="/" variant="light" mt="xs">
                 Загрузить файл

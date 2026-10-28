@@ -67,7 +67,7 @@ export function QualityPage() {
       <div>
         <Title order={2}>Качество</Title>
         <Text c="dimmed" mt={4}>
-          Замеры на размеченном наборе. Цифры для защиты — только с закрытой части (test), подтверждённые ответы
+          Замеры на размеченном наборе. Цифры для защиты берём только с закрытой части (test). Подтверждённые ответы
           пользователей при замере отключены, чтобы не завышать результат.
         </Text>
       </div>
@@ -86,7 +86,7 @@ export function QualityPage() {
           <Group justify="space-between" mb="md">
             <Group gap="xs">
               <Text fw={600}>Последний прогон</Text>
-              <Badge variant="light">{run.split === "test" ? "test — контрольный" : "dev"}</Badge>
+              <Badge variant="light">{run.split === "test" ? "test (контрольный)" : "dev"}</Badge>
             </Group>
             <Text size="sm" c="dimmed">
               {run.metrics.samples} позиций · {dateTime(run.created_at)}
@@ -114,7 +114,7 @@ export function QualityPage() {
                       <Text fz={26} fw={650} className="tabular" c={ok ? undefined : "red"}>
                         {m.lowerIsBetter ? v.toFixed(3) : pct(v)}
                       </Text>
-                      <Text size="sm" c={ok ? "var(--k-hi)" : "var(--k-lo)"}>
+                      <Text size="sm" c={ok ? "var(--k-hi-ink)" : "var(--k-lo-ink)"}>
                         {ok ? "✓" : "✗"} цель {m.lowerIsBetter ? `≤ ${m.target}` : `≥ ${pct(m.target)}`}
                       </Text>
                     </Group>
@@ -129,8 +129,8 @@ export function QualityPage() {
           {run.metrics.seconds_per_1000 != null && (
             <Text size="sm" mt="lg">
               Скорость: 1000 позиций за <b>{duration(run.metrics.seconds_per_1000)}</b>{" "}
-              <Text span c={run.metrics.seconds_per_1000 < 300 ? "var(--k-hi)" : "var(--k-lo)"}>
-                (критерий ТЗ — меньше 5 минут)
+              <Text span c={run.metrics.seconds_per_1000 < 300 ? "var(--k-hi-ink)" : "var(--k-lo-ink)"}>
+                (по ТЗ: меньше 5 минут)
               </Text>
             </Text>
           )}
@@ -148,7 +148,7 @@ export function QualityPage() {
             <Stat
               label="Исправлено среди «зелёных»"
               value={stats.data.green_correction_rate == null ? "нет данных" : pct(stats.data.green_correction_rate)}
-              hint="Из зелёных позиций, которые человек проверил вручную, — доля исправленных. Показывает, можно ли доверять массовому подтверждению."
+              hint="Доля исправленных среди зелёных позиций, которые человек проверил вручную. Показывает, можно ли доверять массовому подтверждению."
             />
             <Stat label="Позиций с ошибкой" value={pct(stats.data.failed_items_share)} />
           </SimpleGrid>

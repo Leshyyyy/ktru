@@ -24,7 +24,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
-import { IconArrowDown, IconArrowUp, IconCheck, IconSearch, IconX } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconCheck, IconMinus, IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import { useCatalogItem, useCatalogSearch, useItem } from "../api/hooks";
 import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
@@ -136,13 +136,13 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
               <Group gap={6} wrap="nowrap">
                 <Button variant="default" size="compact-sm" onClick={onPrev} disabled={!onPrev} aria-label="Предыдущая">
                   <IconArrowUp size={14} />
-                  <Kbd size="xs" ml={4}>
+                  <Kbd size="sm" ml={4}>
                     K
                   </Kbd>
                 </Button>
                 <Button variant="default" size="compact-sm" onClick={onNext} disabled={!onNext} aria-label="Следующая">
                   <IconArrowDown size={14} />
-                  <Kbd size="xs" ml={4}>
+                  <Kbd size="sm" ml={4}>
                     J
                   </Kbd>
                 </Button>
@@ -166,7 +166,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
             <Stack gap="lg" p="lg" pt="md">
               {pending && (
                 <Alert color="gray" icon={<Loader size={16} />}>
-                  Позиция ещё обрабатывается — решение можно будет принять, когда модель предложит код.
+                  Позиция ещё обрабатывается. Решение можно будет принять, когда модель предложит код.
                 </Alert>
               )}
               {item.error && (
@@ -190,7 +190,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                   </div>
                   {unsure && !pending && item.final?.source !== "user" && (
                     <Text className={classes.unsure}>
-                      Система не уверена. Сравните варианты по характеристикам — выберите подходящий или найдите код в
+                      Система не уверена. Сравните варианты по характеристикам: выберите подходящий или найдите код в
                       каталоге.
                     </Text>
                   )}
@@ -237,20 +237,20 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                   flex={1}
                   leftSection={<IconSearch size={18} />}
                   onClick={() => setManual(true)}
-                  rightSection={<Kbd size="xs">Enter</Kbd>}
+                  rightSection={<Kbd size="sm">Enter</Kbd>}
                 >
                   Найти код в каталоге
                 </Button>
                 {item.predictions.length > 0 && (
                   <Text size="sm" c="dimmed" maw={170} lh={1.3}>
-                    или выберите вариант выше — клавиши 1–{item.predictions.length}
+                    или выберите вариант выше клавишами {item.predictions.map((p) => p.rank).join(", ")}
                   </Text>
                 )}
               </>
             ) : manual && !chosen ? (
               <Text size="sm" c="dimmed">
-                Выберите код в результатах поиска и сохраните его{" "}
-                {item.predictions.length > 0 && "— или вернитесь к вариантам выше"}.
+                Выберите код в результатах поиска и сохраните его
+                {item.predictions.length > 0 && " или вернитесь к вариантам выше"}.
               </Text>
             ) : (
               <>
@@ -259,7 +259,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                   flex={1}
                   disabled={!canDecide}
                   onClick={() => decideVariant()}
-                  rightSection={canDecide ? <Kbd size="xs">Enter</Kbd> : undefined}
+                  rightSection={canDecide ? <Kbd size="sm">Enter</Kbd> : undefined}
                 >
                   {pending
                     ? "Позиция ещё обрабатывается"
@@ -353,7 +353,7 @@ function Variant({ p, picked, onPick }: { p: Prediction; picked: boolean; onPick
 function CharChip({ m }: { m: CharacteristicMatch }) {
   const bad = m.status === "mismatch" || (m.status === "missing" && m.required);
   const kind = m.status === "match" ? "y" : bad ? "n" : "none";
-  const icon = m.status === "match" ? <IconCheck size={11} /> : bad ? <IconX size={11} /> : "—";
+  const icon = m.status === "match" ? <IconCheck size={11} /> : bad ? <IconX size={11} /> : <IconMinus size={11} />;
   return (
     <span className={classes.cm} data-kind={kind} title={m.expected ? `Допустимо по КТРУ: ${m.expected}` : undefined}>
       {icon} {m.name}: {m.found ?? "не указан"}
@@ -401,6 +401,8 @@ function ManualCode({
       </div>
       <Stack gap="sm">
         <TextInput
+          id="catalog-search"
+          aria-label="Поиск кода в каталоге КТРУ"
           placeholder="Начало кода или слово из названия"
           leftSection={<IconSearch size={16} />}
           rightSection={search.isFetching ? <Loader size={14} /> : undefined}
@@ -415,7 +417,7 @@ function ManualCode({
             Введите хотя бы 2 символа. Ищем только в версии каталога этой задачи.
           </Text>
         ) : search.isError ? (
-          <Text size="sm" c="var(--k-lo)">
+          <Text size="sm" c="var(--k-lo-ink)">
             {(search.error as Error).message}
           </Text>
         ) : found.length === 0 && !search.isFetching ? (
@@ -455,7 +457,7 @@ function ManualCode({
           </Stack>
         )}
         <Textarea
-          placeholder="Почему исправлено — необязательно, попадёт в журнал решений"
+          placeholder="Почему исправлено (необязательно, попадёт в журнал решений)"
           value={reason}
           onChange={(e) => setReason(e.currentTarget.value)}
           maxLength={500}
