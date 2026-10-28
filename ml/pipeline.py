@@ -31,6 +31,7 @@ from contracts.ml_contracts import (
 
 from . import calibrate as calibration
 from . import category as categories
+from . import vector_store
 from .catalog import Catalog, entry_from_row, load_jsonl
 from .charmatch import CharMatcher, EntryMatch, build_query_context
 from .config import Settings
@@ -70,22 +71,29 @@ class Ranked:
     timings_ms: dict[str, float] = field(default_factory=dict)
 
 
-_LOAD = object()  # модель категорий: загрузить по settings.category_model_path
+_LOAD = object()  # модель категорий / эмбеддер: загрузить по настройкам
+
+
+def make_embedder(settings: Settings):
+    """Эмбеддер по EMBEDDER_MODEL или None (тогда поиск только на TF-IDF). torch импортируется только здесь."""
+    if not settings.embedder_model:
+        return None
+    from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
+
+    return SentenceTransformerEmbedder(settings.embedder_model, settings.device)
 
 
 class KtruPipeline:
     def __init__(self, settings: Optional[Settings] = None, catalog: Optional[Catalog] = None,
-                 calibrator=None, reranker=None, extractor=None, category=_LOAD):
+                 calibrator=None, reranker=None, extractor=None, category=_LOAD, embedder=_LOAD, vectors=None):
         t0 = time.perf_counter()
         self.settings = settings or Settings()
         self.catalog = catalog or Catalog(load_jsonl(self.settings.resolved_catalog_path()))
         self.matcher = CharMatcher(self.catalog)
-        embedder = None
-        if self.settings.embedder_model:
-            from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
-
-            embedder = SentenceTransformerEmbedder(self.settings.embedder_model, self.settings.device)
-        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder, cache_dir=self.settings.embed_cache_dir)
+        if embedder is _LOAD:
+            embedder = make_embedder(self.settings)
+        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder, cache_dir=self.settings.embed_cache_dir,
+                                         vectors=vectors)
         self.extractor = extractor or RulesExtractor()
         if reranker is not None:
             self.reranker, rerank_degraded = reranker, False
@@ -301,11 +309,15 @@ class CatalogVersions:
     KEEP = 2
 
     def __init__(self, settings: Optional[Settings] = None, calibrator=None, reranker=None, extractor=None,
-                 category=_LOAD):
+                 category=_LOAD, embedder=_LOAD):
         self.settings = settings or Settings()
         self._calibrator = calibrator or calibration.load(self.settings.calibrator_path)
         # Модель категорий от версии каталога не зависит: коды ОКПД2, которых нет в версии, поиск пропускает.
         self._category = categories.load(self.settings.category_model_path) if category is _LOAD else category
+        # Эмбеддер один на все версии; векторы версии из базы хранятся в catalog_items.embedding (pgvector).
+        self._embedder = make_embedder(self.settings) if embedder is _LOAD else embedder
+        self._store = (vector_store.connect(self.settings.database_url, self.settings.embedding_dim)
+                       if self._embedder is not None else None)
         self._reranker = reranker
         self._extractor = extractor or RulesExtractor()
         self._versions: OrderedDict[str, KtruPipeline] = OrderedDict()
@@ -315,14 +327,29 @@ class CatalogVersions:
     def load_version(self, version_id: str, rows: Iterable[dict]) -> int:
         """Строит индекс версии каталога из строк CatalogRow (dict). Долго (~50 с на полном КТРУ) — вызывать
         из отдельного потока; классификация других версий в это время продолжается. → число позиций."""
-        return self._add(version_id, Catalog(entry_from_row(r) for r in rows))
+        return self._add(version_id, Catalog(entry_from_row(r) for r in rows), self._db_vectors(version_id))
 
     def load_file(self, version_id: str, path: str) -> int:
-        return self._add(version_id, Catalog(load_jsonl(path)))
+        # Файл без версии — тот же, что migrate загрузил в базу: векторы пишутся в последнюю готовую версию.
+        db_version = version_id or (self._store.latest_version() if self._store is not None else None)
+        return self._add(version_id, Catalog(load_jsonl(path)), self._db_vectors(db_version))
 
-    def _add(self, version_id: str, catalog: Catalog) -> int:
+    def _db_vectors(self, version_id: Optional[str]):
+        """Векторы наименований версии из catalog_items.embedding (pgvector); пустые сначала досчитываются.
+        Без базы (DATABASE_URL) — None: retriever посчитает векторы сам и закэширует на диске."""
+        if self._store is None or not version_id:
+            return None
+        try:
+            self._store.fill_catalog(version_id, self._embedder)
+            return self._store.catalog_vectors(version_id)
+        except Exception:  # noqa: BLE001 — база недоступна: векторы считаются в памяти, классификация работает
+            log.exception("pgvector недоступен, эмбеддинги каталога считаются в памяти")
+            return None
+
+    def _add(self, version_id: str, catalog: Catalog, vectors=None) -> int:
         engine = KtruPipeline(self.settings, catalog=catalog, calibrator=self._calibrator,
-                              reranker=self._reranker, extractor=self._extractor, category=self._category)
+                              reranker=self._reranker, extractor=self._extractor, category=self._category,
+                              embedder=self._embedder, vectors=vectors)
         self._reranker = self._reranker or engine.reranker
         with self._lock:
             engine.add_examples(self._examples)

@@ -62,6 +62,7 @@ class QueryContext:
     text: str
     numbers: list[QueryNumber]
     _anchor_cache: dict = field(default_factory=dict)
+    _vocab_cache: dict = field(default_factory=dict)  # название характеристики → значения из словаря, найденные в тексте
 
     def anchor(self, stems: list[str]) -> Optional[tuple[int, int]]:
         """Где в тексте упомянута характеристика: (начало, конец) группы её слов.
@@ -123,6 +124,7 @@ class CharMatcher:
         self.vocab = {name: values for name, values in catalog.text_vocab.items()}
         self._stems: dict[str, list[str]] = {}
         self._patterns: dict[str, re.Pattern] = {}
+        self._vocab_patterns: dict[str, Optional[re.Pattern]] = {}
 
     def _stems_for(self, char: CatalogChar) -> list[str]:
         if char.name not in self._stems:
@@ -134,6 +136,19 @@ class CharMatcher:
         if pat is None:
             pat = self._patterns[value_norm] = re.compile(rf"(?<![\w]){re.escape(value_norm)}(?![\w])")
         return bool(pat.search(text))
+
+    def _vocab_in_text(self, q: QueryContext, char_name: str) -> set[str]:
+        """Какие значения характеристики из всего каталога упомянуты в тексте. Одно составное выражение на
+        характеристику и один проход по тексту на запрос: раньше каждое значение искалось отдельно у каждого
+        кандидата — миллионы поисков на пачку и половина времени конвейера."""
+        if char_name not in q._vocab_cache:
+            pat = self._vocab_patterns.get(char_name, False)
+            if pat is False:
+                values = sorted((v for v in self.vocab.get(char_name, ()) if len(v) >= 2), key=len, reverse=True)
+                pat = re.compile(rf"(?=(?<![\w])({'|'.join(map(re.escape, values))})(?![\w]))") if values else None
+                self._vocab_patterns[char_name] = pat
+            q._vocab_cache[char_name] = {m.group(1) for m in pat.finditer(q.text)} if pat else set()
+        return q._vocab_cache[char_name]
 
     def match_char(self, char: CatalogChar, q: QueryContext) -> tuple[str, Optional[str], float, bool]:
         """→ (status, что найдено в тексте, качество совпадения 0..1, слабое ли свидетельство)."""
@@ -184,9 +199,9 @@ class CharMatcher:
                     return "match", t.raw, breadth, False
             # В тексте значение этой характеристики, которого нет у позиции: другой формат, другой тип.
             own = {t.norm for t in texts}
-            for other in self.vocab.get(char.name, ()):
-                if other not in own and len(other) >= 2 and self._contains(q.text, other):
-                    return "mismatch", other, 0.0, False
+            others = sorted(self._vocab_in_text(q, char.name) - own)
+            if others:
+                return "mismatch", others[0], 0.0, False
         return "missing", None, 0.0, False
 
     def match_entry(self, entry: CatalogEntry, q: QueryContext, required_only: bool = False) -> EntryMatch:

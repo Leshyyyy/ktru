@@ -110,6 +110,7 @@ class _FakeEmbedder:
     """Детерминированные «эмбеддинги» по буквам — проверяем путь с векторами без скачивания модели."""
 
     model_name = "fake/letters"
+    dim = 64
     calls = 0
 
     def embed(self, texts, kind="query"):
@@ -139,3 +140,23 @@ def test_dense_retrieval_and_embedding_cache(tmp_path):
     second = MemoryRetriever(catalog, CharMatcher(catalog), _FakeEmbedder(), cache_dir=tmp_path)
     assert _FakeEmbedder.calls == calls  # каталог взят из кэша, не пересчитан
     assert (second.dense == first.dense).all()
+
+
+def test_vectors_from_store_are_used_instead_of_embedding_catalog():
+    import numpy as np
+    from ml.catalog import Catalog, entry_from_row
+    from ml.charmatch import CharMatcher
+    from ml.retrieve import MemoryRetriever
+    from ml.vector_store import pad
+
+    from conftest import SYNTH_ROWS
+
+    catalog = Catalog([entry_from_row(r) for r in SYNTH_ROWS])
+    emb = _FakeEmbedder()
+    own = MemoryRetriever(catalog, CharMatcher(catalog), emb)
+    calls = _FakeEmbedder.calls
+    # Векторы позиций, как их отдаёт pgvector: дополнены нулями до vector(1024), косинус тот же.
+    stored = {e.ktru_code: pad(own.dense[own.name_idx[j]][None, :], 1024)[0] for j, e in enumerate(own.items)}
+    from_db = MemoryRetriever(catalog, CharMatcher(catalog), emb, vectors=stored)
+    assert _FakeEmbedder.calls == calls  # каталог не пересчитывался
+    assert np.allclose(from_db.dense, own.dense)

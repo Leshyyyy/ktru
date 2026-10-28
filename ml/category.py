@@ -28,7 +28,9 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-K_NEIGHBORS = 15
+K_NEIGHBORS = 30
+VOTE_POWER = 6  # вес соседа — близость в этой степени: решают самые близкие (на ste_dev 2 → 74,6%, 6 → 79,9%)
+WORD_SHARE = 0.3  # доля словных признаков рядом с символьными 3–4-граммами (только символы — 78,5%)
 CHUNK = 200  # запросов за одно умножение: плотная строка схожести на ~1 млн названий — 4 МБ
 
 
@@ -45,8 +47,34 @@ def query_text(text: str, name_column: str = "") -> str:
     return re.split(r"[;\n]", text, maxsplit=1)[0][:200]
 
 
+class NameVectorizer:
+    """TF-IDF по символьным 3–4-граммам и по словам (1–2), склеенные с весами; строки нормированы.
+    Символы ловят формы слов и опечатки, слова — главное существительное и марку целиком."""
+
+    def __init__(self, word_share: float = WORD_SHARE, min_df: int = 3):
+        from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: PLC0415
+
+        self.word_share = word_share
+        self.chars = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 4), sublinear_tf=True, min_df=min_df,
+                                     dtype=np.float32)
+        self.words = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), sublinear_tf=True,
+                                     min_df=max(1, min_df - 1), dtype=np.float32)
+
+    def _join(self, a, b):
+        from scipy.sparse import hstack  # noqa: PLC0415
+        from sklearn.preprocessing import normalize  # noqa: PLC0415
+
+        return normalize(hstack([a * (1 - self.word_share) ** 0.5, b * self.word_share ** 0.5]).tocsr())
+
+    def fit_transform(self, texts: list[str]):
+        return self._join(self.chars.fit_transform(texts), self.words.fit_transform(texts))
+
+    def transform(self, texts: list[str]):
+        return self._join(self.chars.transform(texts), self.words.transform(texts))
+
+
 class CategoryModel:
-    """Голосование ближайших соседей: вес соседа — квадрат косинусной близости (TF-IDF по 3–4-граммам символов)."""
+    """Голосование ближайших соседей: вес соседа — косинусная близость в степени VOTE_POWER."""
 
     def __init__(self, vectorizer, matrix, labels: np.ndarray, codes: list[str]):
         self.vectorizer = vectorizer
@@ -56,13 +84,9 @@ class CategoryModel:
 
     @classmethod
     def fit(cls, names: list[str], okpd2: list[str]) -> "CategoryModel":
-        from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: PLC0415
-
         codes = sorted(set(okpd2))
         index = {c: i for i, c in enumerate(codes)}
-        min_df = 3 if len(names) > 10_000 else 1
-        vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 4), sublinear_tf=True, min_df=min_df,
-                              dtype=np.float32)
+        vec = NameVectorizer(min_df=3 if len(names) > 10_000 else 1)
         matrix = vec.fit_transform([norm_name(n) for n in names]).tocsr()
         labels = np.array([index[c] for c in okpd2], dtype=np.int32)
         return cls(vec, matrix, labels, codes)
@@ -80,7 +104,7 @@ class CategoryModel:
                 vote: dict[int, float] = defaultdict(float)
                 for j in top:
                     if row[j] > 0:
-                        vote[int(self.labels[j])] += float(row[j]) ** 2
+                        vote[int(self.labels[j])] += float(row[j]) ** VOTE_POWER
                 total = sum(vote.values())
                 if not total:
                     out.append(({}, 0.0))
@@ -157,8 +181,10 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     t = time.perf_counter()
+    from . import category as module  # noqa: PLC0415  # не __main__: иначе pickle сошлётся на __main__.NameVectorizer
+
     names, codes = read_ste(args.ste, active_okpd2(args.catalog), load_names(args.exclude), args.per_code)
-    model = CategoryModel.fit(names, codes)
+    model = module.CategoryModel.fit(names, codes)
     model.save(args.out)
     print(f"Модель категорий: {len(names)} названий, {len(model.codes)} кодов ОКПД2, "
           f"{model.nbytes() / 2**20:.0f} МБ в памяти, {time.perf_counter() - t:.0f} с → {args.out}", file=sys.stderr)
