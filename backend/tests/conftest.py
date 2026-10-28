@@ -1,16 +1,62 @@
 from __future__ import annotations
 
+import io
 import os
 import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import openpyxl
 import pytest
-from sqlalchemy import make_url
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine, make_url
 from sqlalchemy.engine import URL
 
+from backend import migrate
+from backend.app import deps
+from backend.app.health import HealthChecker
+from backend.app.main import create_app
+from backend.core import processing
 from backend.core.db import make_engine
+from backend.core.readiness import write_status
 from backend.core.settings import Settings
+from contracts.ml_contracts import Pipeline
+from contracts.stub_pipeline import StubPipeline
+
+# Состояние worker-ml в Redis, при котором /health готов: заглушка загружена.
+STUB_STATUS = {
+    "models": True,
+    "catalog": True,
+    "pipeline": "stub",
+    "mode": {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False},
+    "error": None,
+}
+# Искусственная спецификация: только выдуманные строки, без данных КТРУ (правило backend/CLAUDE.md).
+HEADER = ["Наименование товара", "Характеристики", "Кол-во", "Ед. изм."]
+ROWS = [
+    ["Ноутбук Lenovo IdeaPad 3 15IAU7", '15.6", Core i5, 16 ГБ', 12, "шт"],
+    ["Принтер лазерный Xerox B230", "A4, 34 стр/мин", 3, "шт"],
+    ["Бумага офисная А4", "500 листов", 40, "пач"],
+]
+MAPPING = [
+    {"index": 0, "role": "name"},
+    {"index": 1, "role": "characteristics"},
+    {"index": 2, "role": "quantity"},
+    {"index": 3, "role": "unit"},
+]
+
+
+def xlsx_bytes(rows: list[list[Any]], sheet: str = "Лист1") -> bytes:
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet
+    for row in rows:
+        worksheet.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +114,38 @@ def fake_redis() -> FakeRedis:
     return FakeRedis()
 
 
+class FakeQueue:
+    """Очередь в памяти: записывает поставленные задачи; broken — брокер недоступен."""
+
+    def __init__(self) -> None:
+        self.parse: list[str] = []
+        self.chunks: list[tuple[str, list[str]]] = []
+        self.broken = False
+
+    def _check(self) -> None:
+        if self.broken:
+            raise ConnectionError("брокер недоступен")
+
+    def parse_file(self, job_id: str) -> None:
+        self._check()
+        self.parse.append(job_id)
+
+    def process_chunk(self, job_id: str, item_ids: list[str]) -> None:
+        self._check()
+        self.chunks.append((job_id, item_ids))
+
+
+def drain(queue: FakeQueue, engine: Engine, settings: Settings, pipeline: Pipeline | None = None) -> None:
+    """Выполняет задачи из очереди, как worker-io и worker-ml, пока очередь не опустеет."""
+    pipeline = pipeline or StubPipeline()
+    while queue.parse or queue.chunks:
+        if queue.parse:
+            processing.parse_job(engine, settings, queue, uuid.UUID(queue.parse.pop(0)))
+        else:
+            job_id, item_ids = queue.chunks.pop(0)
+            processing.process_chunk(engine, settings, pipeline, uuid.UUID(job_id), [uuid.UUID(i) for i in item_ids])
+
+
 # --- PostgreSQL для тестов с маркером db -------------------------------------------------------------------
 
 
@@ -105,3 +183,54 @@ def db_settings(admin_url: URL) -> Iterator[Settings]:
     finally:
         _admin_exec(admin_url, f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
         _admin_exec(admin_url, f'DROP ROLE IF EXISTS "{role}"')
+
+
+# --- API на настоящей базе с очередью в памяти ---------------------------------------------------------------
+
+
+@dataclass
+class Stack:
+    client: TestClient
+    queue: FakeQueue
+    settings: Settings
+    engine: Engine  # роль приложения — та же, что у воркеров
+    redis: FakeRedis
+
+    def drain(self, pipeline: Pipeline | None = None, settings: Settings | None = None) -> None:
+        drain(self.queue, self.engine, settings or self.settings, pipeline)
+
+    def upload(self, content: bytes, filename: str = "spec.xlsx") -> dict[str, Any]:
+        response = self.client.post("/api/v1/files", files={"file": (filename, content)})
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def create_job(self, file_id: str, mapping: list[dict[str, Any]] | None = None, **body: Any) -> dict[str, Any]:
+        response = self.client.post(
+            "/api/v1/jobs", json={"file_id": file_id, "column_mapping": mapping or MAPPING, **body}
+        )
+        assert response.status_code == 202, response.text
+        return response.json()
+
+    def finished_job(self, rows: list[list[Any]], pipeline: Pipeline | None = None) -> dict[str, Any]:
+        """Файл → задача → все задачи очереди выполнены; возвращает задачу из GET /jobs/{id}."""
+        job = self.create_job(self.upload(xlsx_bytes([HEADER, *rows]))["file_id"])
+        self.drain(pipeline)
+        return self.client.get(f"/api/v1/jobs/{job['job_id']}").json()
+
+    def stored_files(self) -> list[Path]:
+        return sorted(self.settings.upload_dir.iterdir()) if self.settings.upload_dir.exists() else []
+
+
+@pytest.fixture
+def stack(db_settings: Settings, tmp_path: Path, fake_redis: FakeRedis) -> Iterator[Stack]:
+    settings = db_settings.model_copy(update={"upload_dir": tmp_path / "uploads"})
+    assert migrate.main(settings) == 0
+    write_status(fake_redis, STUB_STATUS, 30)
+    engine = make_engine(settings.app_database_url(), application_name="ktru-tests", null_pool=True)
+    queue = FakeQueue()
+    app = create_app(settings)
+    app.dependency_overrides[deps.get_queue] = lambda: queue
+    app.dependency_overrides[deps.get_health_checker] = lambda: HealthChecker(engine, fake_redis)  # type: ignore[arg-type]
+    with TestClient(app) as client:
+        yield Stack(client, queue, settings, engine, fake_redis)
+    engine.dispose()

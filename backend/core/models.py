@@ -134,7 +134,7 @@ class Item(Base):
     job_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("jobs.id", ondelete="CASCADE"))
     row_index: Mapped[int] = mapped_column(Integer)
     raw_text: Mapped[str] = mapped_column(Text)
-    raw_row: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    raw_row: Mapped[list[Any]] = mapped_column(JSONB)  # значения всех колонок строки по порядку (ParsedRow.raw_row)
     extracted: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
     path: Mapped[str | None] = mapped_column(Text)

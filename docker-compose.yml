@@ -139,6 +139,7 @@ services:
       API_STATEMENT_TIMEOUT_MS:
       CORS_ORIGINS:
       MAX_FILE_MB:
+      UPLOAD_EXTENSIONS:
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
       CLASSIFY_MAX_ITEMS:
@@ -228,6 +229,9 @@ services:
       ML_WORKER_INIT_TIMEOUT_S:
       STUB_DELAY_MS:
       STUB_DEGRADED:
+      # Статус позиции (processed / needs_review) ставит worker-ml по порогу green — тому же, что в /config.
+      GREEN_THRESHOLD:
+      YELLOW_THRESHOLD:
       # Переменные ML (docs/analytics/07-ml.md). Ключ LLM получает только этот сервис.
       EXTRACTOR:
       RERANKER:
