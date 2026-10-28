@@ -160,3 +160,14 @@ def test_vectors_from_store_are_used_instead_of_embedding_catalog():
     from_db = MemoryRetriever(catalog, CharMatcher(catalog), emb, vectors=stored)
     assert _FakeEmbedder.calls == calls  # каталог не пересчитывался
     assert np.allclose(from_db.dense, own.dense)
+
+
+def test_required_missing_only_when_it_decides():
+    from ml.catalog import entry_from_row
+
+    from conftest import SYNTH_ROWS, make_pipeline
+
+    # Одноимённой позиции нет — недостающая характеристика выбор не решает, флаг не нужен.
+    pipe = make_pipeline([entry_from_row(r) for r in SYNTH_ROWS if r["ktru_code"] != "77.77.01.000-00000017"])
+    (r,) = _run(pipe, "Ноутбук")
+    assert r.predictions[0].ktru_code == "77.77.01.000-00000016" and "required_missing" not in r.flags

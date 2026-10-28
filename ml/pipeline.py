@@ -292,7 +292,9 @@ class KtruPipeline:
             ))
         ex = r.extracted
         flags = []
-        if top and top[0].match.required_missing:
+        # «Нет обязательной характеристики» — только если она и решает выбор: в топ-3 есть одноимённая позиция.
+        # Иначе флаг стоял у двух третей живых строк (e2e, 28.10), в том числе при уверенности 100%.
+        if top and top[0].match.required_missing and any(s.candidate.name == top[0].candidate.name for s in top[1:]):
             flags.append("required_missing")
         if ex and ex.field_confidence.get("name", 1.0) < 0.5:
             flags.append("low_extraction_confidence")

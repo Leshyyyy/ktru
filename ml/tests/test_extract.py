@@ -45,3 +45,14 @@ def test_trailing_number_in_model_and_latin_in_name():
     assert _x("Системный блок iRU Office 313. объем оперативной памяти: не менее 8 ГБ").model == "Office 313"
     a = _x("USB-ресивер для беспроводной связи A4Tech Unifying, дальность действия не менее 10 м")
     assert (a.name, a.brand, a.model) == ("USB-ресивер для беспроводной связи", "A4Tech", "Unifying")
+
+
+def test_characteristics_from_column_with_commas_in_values():
+    from contracts.ml_contracts import RawItem
+    from ml.extract import RulesExtractor
+
+    chars = "Вид игрушки: Трактор с грейдером; Габаритные размеры: 35,5х16х16 см; Вид материала: Пластик, резина"
+    item = RawItem(item_id="1", text="Трактор с грейдером НОРД " + chars,
+                   columns={"name": "Трактор с грейдером НОРД", "characteristics": chars})
+    assert RulesExtractor().extract_one(item).characteristics == {
+        "Вид игрушки": "Трактор с грейдером", "Габаритные размеры": "35,5х16х16 см", "Вид материала": "Пластик, резина"}

@@ -235,11 +235,13 @@ def _looks_like_model(tok: str) -> bool:
 
 
 _KV = re.compile(r"([А-Яа-яЁё][^:;,]{1,60}?)\s*:\s*([^;,]+)")
+# Пары через «;» (как в спецификациях и карточках СТЕ): запятая — часть значения («35,5х16 см», «Пластик, резина»).
+_KV_SEMI = re.compile(r"([А-Яа-яЁё][^:;]{1,60}?)\s*:\s*([^;]+)")
 
 
 def _characteristics(text: str) -> dict[str, str]:
     out = {}
-    for m in _KV.finditer(text):
+    for m in (_KV_SEMI if ";" in text else _KV).finditer(text):
         key = m.group(1).strip()
         if len(out) < 30 and key.lower() not in ("наименование", "товар"):
             out[key] = m.group(2).strip()
@@ -276,7 +278,10 @@ class RulesExtractor:
             model=model,
             quantity=_quantity(item.columns.get("quantity")),
             unit=(item.columns.get("unit") or None),
-            characteristics=_characteristics(text),
+            # Колонка характеристик отдельно от наименования: бэкенд склеивает колонки через пробел, и пара
+            # «Вид игрушки: …» иначе получала бы в ключ хвост наименования.
+            characteristics=_characteristics(
+                " ; ".join(v for k in ("description", "characteristics") if (v := item.columns.get(k))) or text),
             method="rules",
             field_confidence={"name": name_conf, "brand": brand_conf, "model": model_conf},
         )
