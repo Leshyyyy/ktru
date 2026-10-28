@@ -16,6 +16,7 @@ from backend.app.routes.catalog import catalog_item
 from backend.core import catalog, models
 from contracts.stub_pipeline import StubPipeline
 
+from . import compose_smoke
 from .conftest import Stack
 from .openapi import assert_matches_schema
 
@@ -221,3 +222,12 @@ def test_catalog_import_with_stub_and_stale(stack: Stack) -> None:
         )
     assert catalog.fail_stale_imports(stack.engine) == 1
     assert _version(stack, stale_id)["status"] == "failed"
+
+
+@pytest.mark.db
+def test_compose_smoke_multipart_is_accepted(stack: Stack) -> None:
+    """compose_smoke.py собирает multipart вручную (без зависимостей) — API должен его разобрать."""
+    body, content_type = compose_smoke.multipart("ci.jsonl", _jsonl(compose_smoke.CATALOG), {"note": "CI"})
+    response = stack.client.post("/api/v1/catalog/import", content=body, headers={"Content-Type": content_type})
+    assert response.status_code == 202, response.text
+    assert (response.json()["source"], response.json()["note"]) == ("api:ci.jsonl", "CI")
