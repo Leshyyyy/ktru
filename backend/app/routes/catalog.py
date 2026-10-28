@@ -34,7 +34,8 @@ def search_catalog(
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> schemas.CatalogSearchResult:
     """По началу кода и по наименованию: подстрока (индекс триграмм) или слова с учётом формы (tsv, «ноутбуки»).
-    Сверху — совпадение по коду, затем действующие коды и самые похожие наименования.
+    Сверху — совпадение по коду, затем действующие коды и самые похожие наименования. Укрупнённые позиции
+    не предлагаются: ответом они быть не должны.
     """
     text = q.strip()
     if len(text) < 2:  # «  а» проходит min_length, но искать по одной букве бессмысленно
@@ -47,6 +48,7 @@ def search_catalog(
         select(item)
         .where(
             item.version_id == version,
+            item.is_enlarged.is_(False),
             or_(
                 by_code,
                 item.name.ilike(f"%{escape_like(text)}%", escape="\\"),

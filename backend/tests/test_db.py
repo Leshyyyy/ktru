@@ -180,7 +180,11 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
     path.write_text(
         "\n".join(
             json.dumps(r, ensure_ascii=False)
-            for r in (row, {**row, "name": "Стол письменный"}, {**row, "ktru_code": "11.11.11.111-00000002"})
+            for r in (
+                row,
+                {**row, "name": "Стол письменный"},
+                {**row, "ktru_code": "11.11.11.111-00000002", "is_enlarged": True},
+            )
         )
         + "\n\n",
         encoding="utf-8",
@@ -191,6 +195,10 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
         assert (version.status, version.items_count) == ("ready", 2)
         names = session.scalars(select(CatalogItem.name).where(CatalogItem.version_id == version.id)).all()
         assert sorted(names) == ["Стол", "Стол письменный"]  # повтор кода в файле обновил строку
+        enlarged = session.execute(
+            select(CatalogItem.ktru_code, CatalogItem.is_enlarged).where(CatalogItem.version_id == version.id)
+        ).all()
+        assert sorted(enlarged) == [("11.11.11.111-00000001", False), ("11.11.11.111-00000002", True)]
 
     for bad, message in (
         ("{не json", "Строка 1: некорректный JSON"),

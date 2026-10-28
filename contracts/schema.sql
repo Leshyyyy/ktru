@@ -35,6 +35,8 @@ CREATE TABLE catalog_items (
     unit            text,
     -- Если выгрузка содержит статус кода: archived → предупреждение archived_code у позиции.
     status          text         NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+    -- Укрупнённая позиция (в выгрузке ЕИС — is_template): обобщает группу кодов и ответом быть не должна.
+    is_enlarged     boolean      NOT NULL DEFAULT false,
     replaced_by     text,                                     -- код-преемник, если известен
     -- [{"name": "...", "values": ["..."], "required": true}]
     characteristics jsonb        NOT NULL DEFAULT '[]'::jsonb,
@@ -242,6 +244,8 @@ CREATE TABLE eval_samples (
     split               text        NOT NULL CHECK (split IN ('dev', 'test')),
     raw_text            text        NOT NULL,
     expected_ktru_code  text        NOT NULL,
+    -- Другие коды, которые разметчик тоже признал верными (метрика top1_any_valid); NULL — только expected.
+    alt_valid_codes     text[],
     -- Заполнено у 50 позиций из 300 — это набор attrs для метрики извлечения атрибутов.
     expected_attrs      jsonb,                                -- {"name": "...", "brand": "...", "model": "..."}
     difficulty          text        CHECK (difficulty IN ('easy', 'medium', 'hard')),

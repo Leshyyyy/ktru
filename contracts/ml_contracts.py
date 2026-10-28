@@ -211,6 +211,8 @@ class CatalogRow(BaseModel):
     description: Optional[str] = None
     unit: Optional[str] = None
     status: Literal["active", "archived"] = "active"
+    # Укрупнённая позиция (is_template в выгрузке ЕИС): обобщает группу кодов, ответом быть не должна.
+    is_enlarged: bool = False
     replaced_by: Optional[str] = None
     characteristics: list[dict] = Field(default_factory=list)
 

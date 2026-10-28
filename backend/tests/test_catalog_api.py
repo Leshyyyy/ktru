@@ -6,6 +6,8 @@ import uuid
 from typing import Any
 
 import pytest
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
 from backend.app.routes.catalog import catalog_item
 from backend.core import models
@@ -87,3 +89,16 @@ def test_search_by_code_and_name(stack: Stack) -> None:
         _error(stack.client.get("/api/v1/catalog/search", params={"q": q}), 400, "invalid_request")
     _error(stack.client.get("/api/v1/catalog/search"), 400, "invalid_request")
     _error(stack.client.get("/api/v1/catalog/search", params={"q": "ноутбук", "limit": 51}), 400, "invalid_request")
+
+
+@pytest.mark.db
+def test_search_skips_enlarged_items(stack: Stack) -> None:
+    """Укрупнённая позиция (is_enlarged) хранится и открывается по коду, но в подсказках для правки её нет."""
+    with Session(stack.engine) as session, session.begin():
+        session.execute(
+            update(models.CatalogItem)
+            .where(models.CatalogItem.ktru_code == "99.99.03.000-00000002")
+            .values(is_enlarged=True)
+        )
+    assert _search(stack, q="принтер") == ["99.99.03.000-00000001"]
+    assert stack.client.get("/api/v1/catalog/items/99.99.03.000-00000002").status_code == 200
