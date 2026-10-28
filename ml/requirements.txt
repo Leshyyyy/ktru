@@ -5,9 +5,12 @@ scikit-learn
 rapidfuzz
 joblib
 httpx          # Jev через OpenRouter (RERANKER=llm)
-pyarrow        # ml.fetch_catalog: официальный КТРУ из parquet (Hugging Face)
 pytest
 
 # Опционально: эмбеддер (EMBEDDER_MODEL) и cross-encoder (RERANKER=cross_encoder)
 # torch
 # sentence-transformers
+
+# Только офлайн-скрипты (ml.fetch_catalog, ml.build_brands) — worker-ml их не запускает, в образ бэкенда не нужен.
+# Если каталог будут скачивать при сборке образа, pyarrow нужно добавить в backend/requirements.in.
+# pyarrow
