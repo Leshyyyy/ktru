@@ -76,3 +76,16 @@ def test_describe_mode_and_empty_env(monkeypatch):
     monkeypatch.setenv("RERANKER", "llm")
     monkeypatch.setenv("LLM_API_KEY", "")
     assert CatalogVersions(Settings(), category=None, embedder=None).describe_mode()["reranker"] == "none"  # без ключа LLM нет
+
+
+def test_embedder_failure_does_not_stop_worker(monkeypatch):
+    import ml.embed
+    from ml.config import Settings
+    from ml.pipeline import make_embedder
+
+    def offline(*a, **kw):
+        raise OSError("Hugging Face недоступен")
+
+    monkeypatch.setattr(ml.embed, "SentenceTransformerEmbedder", offline)
+    monkeypatch.setenv("EMBEDDER_MODEL", "intfloat/multilingual-e5-small")
+    assert make_embedder(Settings()) is None
