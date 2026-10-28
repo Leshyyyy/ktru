@@ -32,7 +32,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
-  IconArrowLeft,
   IconCheck,
   IconChecks,
   IconDownload,
@@ -55,7 +54,15 @@ import {
   type ItemsParams,
 } from "../api/hooks";
 import type { Band, Item, ItemFlag, ItemStatus, Job } from "../api/types";
-import { ConfidenceBadge, FlagsIcon, ItemStatusBadge, JobStatusBadge, useThresholds } from "../components/badges";
+import {
+  ConfidenceBadge,
+  FlagChips,
+  GroupBadge,
+  ItemStatusBadge,
+  JobStatusBadge,
+  KtruCode,
+  useThresholds,
+} from "../components/badges";
 import { ItemDrawer } from "../components/ItemDrawer";
 import { BAND, dateTime, duration, FLAG, ITEM_STATUS, pct, plural } from "../lib/format";
 
@@ -85,13 +92,15 @@ export function JobPage() {
   return <JobView job={job} />;
 }
 
-function BackLink() {
+/** Хлебные крошки: «Задачи / Спецификация.xlsx». */
+function BackLink({ name }: { name?: string }) {
   return (
-    <Anchor component={Link} to="/jobs" size="sm" c="dimmed">
-      <Group gap={4}>
-        <IconArrowLeft size={14} /> Все задачи
-      </Group>
-    </Anchor>
+    <Text size="sm" c="var(--k-faint)">
+      <Anchor component={Link} to="/jobs" size="sm" c="dimmed" underline="hover">
+        Задачи
+      </Anchor>
+      {name && ` / ${name}`}
+    </Text>
   );
 }
 
@@ -149,29 +158,36 @@ function JobView({ job }: { job: Job }) {
 
   return (
     <Stack gap="lg">
-      <BackLink />
-      <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
-        <div style={{ minWidth: 0 }}>
-          <Group gap="sm" wrap="wrap">
-            <Title order={2} lineClamp={2} style={{ overflowWrap: "anywhere" }}>
-              {job.filename}
-            </Title>
-            <JobStatusBadge status={job.status} />
+      <Stack gap={6}>
+        <BackLink name={job.filename} />
+        <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
+          <div style={{ minWidth: 0 }}>
+            <Group gap="sm" wrap="wrap">
+              <Title order={2} lineClamp={2} style={{ overflowWrap: "anywhere" }}>
+                {job.filename}
+              </Title>
+              <JobStatusBadge status={job.status} />
+              {job.total_items > 0 && (
+                <span className="k-pill">
+                  {job.total_items} {plural(job.total_items, "позиция", "позиции", "позиций")} · проверено{" "}
+                  {(job.summary.confirmed ?? 0) + (job.summary.corrected ?? 0)}
+                </span>
+              )}
+            </Group>
+            <Text size="sm" c="dimmed" mt={4}>
+              Создана {dateTime(job.created_at)}
+              {job.finished_at &&
+                job.started_at &&
+                ` · обработано за ${duration((+new Date(job.finished_at) - +new Date(job.created_at)) / 1000)}`}
+            </Text>
+          </div>
+          <Group gap="sm">
+            {active && <CancelButton job={job} />}
+            {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
+            <ExportMenu job={job} disabled={!finished} />
           </Group>
-          <Text size="sm" c="dimmed" mt={4}>
-            Создана {dateTime(job.created_at)}
-            {job.total_items > 0 && ` · ${job.total_items} ${plural(job.total_items, "позиция", "позиции", "позиций")}`}
-            {job.finished_at &&
-              job.started_at &&
-              ` · обработано за ${duration((+new Date(job.finished_at) - +new Date(job.created_at)) / 1000)}`}
-          </Text>
-        </div>
-        <Group gap="sm">
-          {active && <CancelButton job={job} />}
-          {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
-          <ExportMenu job={job} disabled={!finished} />
         </Group>
-      </Group>
+      </Stack>
 
       {job.effective_mode === "degraded" && (
         <Alert color="blue" variant="light" icon={<IconInfoCircle />}>
@@ -362,62 +378,64 @@ function Summary({
   const t = useThresholds();
   const s = job.summary;
   const reviewed = (s.confirmed ?? 0) + (s.corrected ?? 0);
-  const totalReady = (s.green ?? 0) + (s.yellow ?? 0) + (s.red ?? 0);
-  const tiles: { key: Band; value: number; sub: string }[] = [
-    { key: "green", value: s.green ?? 0, sub: `от ${pct(t.green)}` },
-    { key: "yellow", value: s.yellow ?? 0, sub: `${pct(t.yellow)}–${pct(t.green)}` },
-    { key: "red", value: s.red ?? 0, sub: `ниже ${pct(t.yellow)}` },
+  const tiles: { key: Band; label: string; value: number; hint: string }[] = [
+    { key: "green", label: "Зелёные", value: s.green ?? 0, hint: `уверенность от ${pct(t.green)}` },
+    { key: "yellow", label: "Жёлтые", value: s.yellow ?? 0, hint: `уверенность ${pct(t.yellow)}–${pct(t.green)}` },
+    { key: "red", label: "Красные", value: s.red ?? 0, hint: `уверенность ниже ${pct(t.yellow)}` },
   ];
   return (
-    <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+    <SimpleGrid cols={{ base: 2, sm: 5 }} spacing={12}>
+      <Tile
+        active={false}
+        onClick={() => (onBand(null), onStatus(null))}
+        label="Всего позиций"
+        value={job.total_items}
+      />
       {tiles.map((x) => (
         <Tile
           key={x.key}
           active={band === x.key}
           onClick={() => onBand(band === x.key ? null : x.key)}
-          color={BAND[x.key].color}
-          label={BAND[x.key].label}
+          color={`var(--k-${x.key === "green" ? "hi" : x.key === "yellow" ? "mid" : "lo"})`}
+          label={x.label}
           value={x.value}
-          sub={`${x.sub} · ${totalReady ? Math.round((x.value / totalReady) * 100) : 0}% позиций`}
+          hint={`${BAND[x.key].hint}: ${x.hint}`}
         />
       ))}
       <Tile
         active={status === "confirmed" || status === "corrected"}
         onClick={() => onStatus(status === "corrected" ? null : status === "confirmed" ? "corrected" : "confirmed")}
-        color="violet"
-        label="Проверено человеком"
+        color="var(--k-cor)"
+        label="Проверено"
         value={reviewed}
-        sub={`${s.confirmed ?? 0} подтв. · ${s.corrected ?? 0} испр.${job.failed_items ? ` · ${job.failed_items} ${plural(job.failed_items, "ошибка", "ошибки", "ошибок")}` : ""}`}
+        hint={`${s.confirmed ?? 0} подтверждено, ${s.corrected ?? 0} исправлено${job.failed_items ? `, ${job.failed_items} с ошибкой` : ""}`}
       />
     </SimpleGrid>
   );
 }
 
-function Tile(p: { active: boolean; onClick: () => void; color: string; label: string; value: number; sub: string }) {
-  return (
-    <UnstyledButton onClick={p.onClick} aria-pressed={p.active}>
-      <Card
-        padding="md"
-        style={{
-          borderColor: p.active ? `var(--mantine-color-${p.color}-6)` : undefined,
-          boxShadow: p.active ? `0 0 0 1px var(--mantine-color-${p.color}-6)` : undefined,
-        }}
-      >
-        <Group gap={8}>
-          <Box w={8} h={8} style={{ borderRadius: 8, background: `var(--mantine-color-${p.color}-6)` }} />
-          <Text size="sm" c="dimmed">
-            {p.label}
-          </Text>
-        </Group>
-        <Text fz={28} fw={650} className="tabular" lh={1.2} mt={4}>
-          {p.value}
+function Tile(p: {
+  active: boolean;
+  onClick: () => void;
+  color?: string;
+  label: string;
+  value: number;
+  hint?: string;
+}) {
+  const body = (
+    <UnstyledButton onClick={p.onClick} aria-pressed={p.active} className="k-tile" data-active={p.active || undefined}>
+      <Text fz={24} fw={700} className="tabular" lh={1.2} c={p.color}>
+        {p.value}
+      </Text>
+      <Group gap={7} wrap="nowrap">
+        {p.color && <Box w={9} h={9} style={{ borderRadius: 3, background: p.color, flex: "none" }} />}
+        <Text size="sm" c="dimmed">
+          {p.label}
         </Text>
-        <Text size="xs" c="dimmed">
-          {p.sub}
-        </Text>
-      </Card>
+      </Group>
     </UnstyledButton>
   );
+  return p.hint ? <Tooltip label={p.hint}>{body}</Tooltip> : body;
 }
 
 // ---------------------------------------------------------------- таблица
@@ -441,27 +459,29 @@ function ItemsTable({
   return (
     <ScrollArea type="auto">
       <Table
+        className="k-table"
         highlightOnHover
-        verticalSpacing="sm"
-        horizontalSpacing="md"
-        miw={920}
+        verticalSpacing={10}
+        horizontalSpacing={12}
+        miw={1040}
         style={{ opacity: fetching && !loading ? 0.85 : 1, transition: "opacity .2s" }}
       >
         <Table.Thead>
           <Table.Tr>
-            <Table.Th w={56}>№</Table.Th>
-            <Table.Th>Позиция из файла</Table.Th>
-            <Table.Th w={290}>Код КТРУ</Table.Th>
-            <Table.Th w={100}>Уверенность</Table.Th>
-            <Table.Th w={150}>Статус</Table.Th>
-            <Table.Th w={60} />
+            <Table.Th w={64}>Стр.</Table.Th>
+            <Table.Th>Позиция и извлечённые атрибуты</Table.Th>
+            <Table.Th w={90}>Кол-во</Table.Th>
+            <Table.Th w={300}>Код КТРУ (rank 1 или решение)</Table.Th>
+            <Table.Th w={130}>Уверенность</Table.Th>
+            <Table.Th w={190}>Статус</Table.Th>
+            <Table.Th w={52} />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {loading &&
             Array.from({ length: 6 }).map((_, i) => (
               <Table.Tr key={i}>
-                <Table.Td colSpan={6}>
+                <Table.Td colSpan={7}>
                   <Skeleton h={34} />
                 </Table.Td>
               </Table.Tr>
@@ -479,37 +499,30 @@ function ItemsTable({
                     {it.row_index + 1}
                   </Text>
                 </Table.Td>
-                <Table.Td>
-                  <Text size="sm" lineClamp={2}>
+                <Table.Td style={{ minWidth: 0 }}>
+                  <Text size="sm" lineClamp={1}>
                     {it.raw_text}
                   </Text>
-                  <Group gap={6} mt={4}>
-                    {it.extracted?.brand && (
-                      <Badge size="xs" variant="outline" color="gray" tt="none">
-                        {it.extracted.brand}
-                      </Badge>
+                  <Text size="xs" c="dimmed" mt={2} component="div">
+                    {it.extracted && (
+                      <>
+                        <Text span size="xs" fw={600} c="var(--k-ink)">
+                          {it.extracted.name}
+                        </Text>
+                        {[it.extracted.brand, it.extracted.model].filter(Boolean).map((v) => ` · ${v}`)}
+                      </>
                     )}
-                    {it.extracted?.model && (
-                      <Badge size="xs" variant="outline" color="gray" tt="none">
-                        {it.extracted.model}
-                      </Badge>
+                    {it.group_id && (
+                      <Box component="span" ml={6}>
+                        <GroupBadge size={it.group_size ?? 1} onClick={() => onGroup(it.group_id!)} />
+                      </Box>
                     )}
-                    {it.group_id && (it.group_size ?? 1) > 1 && (
-                      <Tooltip label="Показать все позиции с тем же товаром">
-                        <Badge
-                          size="xs"
-                          variant="light"
-                          style={{ cursor: "pointer" }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onGroup(it.group_id!);
-                          }}
-                        >
-                          ×{it.group_size} в файле
-                        </Badge>
-                      </Tooltip>
-                    )}
-                  </Group>
+                  </Text>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm" c="dimmed" className="tabular" style={{ whiteSpace: "nowrap" }}>
+                    {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
+                  </Text>
                 </Table.Td>
                 <Table.Td>
                   {it.status === "pending" ? (
@@ -517,28 +530,23 @@ function ItemsTable({
                       ожидает обработки
                     </Text>
                   ) : it.status === "failed" && !it.final?.ktru_code ? (
-                    <Text size="sm" c="red">
+                    <Text size="sm" c="var(--k-lo)">
                       {it.error ?? "Ошибка обработки"}
                     </Text>
                   ) : (
-                    <Group gap={6} wrap="nowrap" align="flex-start">
-                      <div style={{ minWidth: 0 }}>
-                        <Group gap={6} wrap="nowrap">
-                          <Text className="mono" fw={600}>
-                            {it.final?.ktru_code}
-                          </Text>
-                          {it.final?.source === "user" && (
-                            <Tooltip label="Код выбран человеком">
-                              <IconUser size={14} color="var(--mantine-color-violet-6)" />
-                            </Tooltip>
-                          )}
-                          <FlagsIcon flags={it.flags} />
-                        </Group>
-                        <Text size="sm" c="dimmed" lineClamp={1}>
-                          {it.final?.name}
-                        </Text>
-                      </div>
-                    </Group>
+                    <div style={{ minWidth: 0 }}>
+                      <Group gap={6} wrap="nowrap">
+                        <KtruCode code={it.final?.ktru_code} />
+                        {it.final?.source === "user" && (
+                          <Tooltip label="Код выбран человеком">
+                            <IconUser size={14} color="var(--k-cor)" />
+                          </Tooltip>
+                        )}
+                      </Group>
+                      <Text size="xs" c="dimmed" lineClamp={1} mt={2}>
+                        {it.final?.name}
+                      </Text>
+                    </div>
                   )}
                 </Table.Td>
                 <Table.Td>
@@ -546,13 +554,13 @@ function ItemsTable({
                 </Table.Td>
                 <Table.Td>
                   <ItemStatusBadge status={it.status} />
+                  <FlagChips flags={it.flags} />
                 </Table.Td>
                 <Table.Td onClick={(e) => e.stopPropagation()}>
                   {canConfirm && (
                     <Tooltip label="Подтвердить предложенный код">
                       <ActionIcon
                         variant="light"
-                        color="teal"
                         onClick={() =>
                           confirm.mutate(it.item_id, {
                             onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
@@ -634,7 +642,7 @@ function BulkConfirm({ job }: { job: Job }) {
         </Stack>
       ),
       labels: { confirm: "Подтвердить", cancel: "Отмена" },
-      confirmProps: { color: "teal" },
+      confirmProps: { color: "primary" },
       onConfirm: () => {
         if (!Number.isFinite(min)) {
           notifications.show({
@@ -648,7 +656,7 @@ function BulkConfirm({ job }: { job: Job }) {
           {
             onSuccess: (r) =>
               notifications.show({
-                color: "teal",
+                color: "primary",
                 message: r.confirmed_count
                   ? `Подтверждено ${r.confirmed_count} ${plural(r.confirmed_count, "позиция", "позиции", "позиций")}`
                   : "Подходящих позиций не нашлось",
@@ -660,8 +668,8 @@ function BulkConfirm({ job }: { job: Job }) {
     });
   };
   return (
-    <Button variant="light" color="teal" leftSection={<IconChecks size={16} />} onClick={open} loading={bulk.isPending}>
-      Подтвердить уверенные
+    <Button variant="default" leftSection={<IconChecks size={16} />} onClick={open} loading={bulk.isPending}>
+      Подтвердить все от {pct(t.green)}
     </Button>
   );
 }
@@ -684,7 +692,7 @@ function ExportMenu({ job, disabled }: { job: Job; disabled: boolean }) {
       {
         onSuccess: ({ unreviewed }) =>
           notifications.show({
-            color: unreviewed ? "yellow" : "teal",
+            color: unreviewed ? "yellow" : "primary",
             title: "Файл выгружен",
             message: unreviewed
               ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком — они помечены в колонке «Источник».`
@@ -694,7 +702,7 @@ function ExportMenu({ job, disabled }: { job: Job; disabled: boolean }) {
       },
     );
   const button = (
-    <Button leftSection={<IconDownload size={16} />} disabled={disabled} loading={exp.isPending}>
+    <Button color="#16201C" leftSection={<IconDownload size={16} />} disabled={disabled} loading={exp.isPending}>
       Выгрузить
     </Button>
   );

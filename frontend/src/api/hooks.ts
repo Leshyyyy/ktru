@@ -238,6 +238,14 @@ export function useCatalogSearch(q: string, versionId?: string) {
   });
 }
 
+export function useCatalogVersions() {
+  return useQuery({
+    queryKey: ["catalog-versions"],
+    queryFn: () => unwrap(api.GET("/catalog/versions")),
+    staleTime: 60_000,
+  });
+}
+
 export function useClassify() {
   return useMutation({
     mutationFn: (texts: string[]) =>

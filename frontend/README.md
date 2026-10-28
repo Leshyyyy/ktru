@@ -64,4 +64,4 @@ src/
 
 ## Стек
 
-React 19, TypeScript, Vite 7, Mantine 8 (компоненты), TanStack Query 5 (данные с сервера), React Router 7, openapi-typescript + openapi-fetch.
+React 19, TypeScript, Vite 7, Mantine 8 (компоненты), TanStack Query 5 (данные с сервера), React Router 7, openapi-typescript + openapi-fetch. Шрифты Onest и JetBrains Mono, тема по макетам из `docs/team/` (только светлая).

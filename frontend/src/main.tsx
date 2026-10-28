@@ -1,4 +1,5 @@
-import "@fontsource-variable/inter";
+import "@fontsource-variable/onest";
+import "@fontsource-variable/jetbrains-mono";
 import "@mantine/core/styles.css";
 import "@mantine/dropzone/styles.css";
 import "@mantine/notifications/styles.css";
@@ -12,7 +13,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router";
 import { router } from "./router";
-import { theme } from "./theme";
+import { cssVariablesResolver, theme } from "./theme";
 import { ApiRequestError } from "./api/client";
 
 const queryClient = new QueryClient({
@@ -27,8 +28,9 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <MantineProvider theme={theme} defaultColorScheme="auto">
-      <Notifications position="bottom-left" />
+    {/* Тёмная тема по макетам не нужна — фиксируем светлую. */}
+    <MantineProvider theme={theme} forceColorScheme="light" cssVariablesResolver={cssVariablesResolver}>
+      <Notifications position="bottom-center" />
       <QueryClientProvider client={queryClient}>
         <ModalsProvider labels={{ confirm: "OK", cancel: "Отмена" }}>
           <RouterProvider router={router} />

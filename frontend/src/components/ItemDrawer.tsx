@@ -37,7 +37,7 @@ import { useState } from "react";
 import { useCatalogSearch, useConfirmItem, useCorrectItem, useItem } from "../api/hooks";
 import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
 import { FLAG } from "../lib/format";
-import { ConfidenceBadge, ItemStatusBadge } from "./badges";
+import { ConfidenceBadge, ItemStatusBadge, KtruCode } from "./badges";
 
 type Props = {
   itemId: string | null;
@@ -58,7 +58,7 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext }: P
     item &&
     confirm.mutate(item.item_id, {
       onSuccess: () => {
-        notifications.show({ color: "teal", message: `Позиция №${item.row_index + 1}: код подтверждён` });
+        notifications.show({ color: "primary", message: `Позиция №${item.row_index + 1}: код подтверждён` });
         onNext?.();
       },
       onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
@@ -145,7 +145,6 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext }: P
               <Kbd size="xs">Enter</Kbd> подтвердить · <Kbd size="xs">↑</Kbd> <Kbd size="xs">↓</Kbd> листать
             </Text>
             <Button
-              color="teal"
               leftSection={<IconCheck size={16} />}
               onClick={doConfirm}
               disabled={!canConfirm}
@@ -168,7 +167,7 @@ function ItemBody({ item, job }: { item: Item; job: Job }) {
       {
         onSuccess: (it) =>
           notifications.show({
-            color: "teal",
+            color: "primary",
             message: it.status === "confirmed" ? "Код подтверждён" : `Код исправлен на ${code}`,
           }),
         onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
@@ -213,9 +212,7 @@ function ItemBody({ item, job }: { item: Item; job: Job }) {
                 Итоговый код {item.final.source === "user" ? "— выбран человеком" : "— предложен моделью"}
               </Text>
               <Group gap="xs" mt={4}>
-                <Text className="mono" fw={650} size="lg">
-                  {item.final.ktru_code}
-                </Text>
+                <KtruCode code={item.final.ktru_code} size="lg" />
                 {item.final.source === "user" && (
                   <Tooltip label="Решение пользователя">
                     <ThemeIcon size="sm" variant="light" radius="xl">
@@ -302,9 +299,7 @@ function PredictionCard({
             {p.rank}
           </Badge>
           <div>
-            <Text className="mono" fw={600}>
-              {p.ktru_code}
-            </Text>
+            <KtruCode code={p.ktru_code} />
             <Text size="sm" fw={500}>
               {p.name}
             </Text>
@@ -335,11 +330,11 @@ function PredictionCard({
 function Matches({ list }: { list: CharacteristicMatch[] }) {
   const icon = (s: CharacteristicMatch["status"]) =>
     s === "match" ? (
-      <IconCircleCheck size={16} color="var(--mantine-color-teal-6)" aria-label="совпадает" />
+      <IconCircleCheck size={16} color="var(--k-hi)" aria-label="совпадает" />
     ) : s === "mismatch" ? (
-      <IconCircleX size={16} color="var(--mantine-color-red-6)" aria-label="не совпадает" />
+      <IconCircleX size={16} color="var(--k-lo)" aria-label="не совпадает" />
     ) : (
-      <IconCircleDashed size={16} color="var(--mantine-color-orange-6)" aria-label="не найдено" />
+      <IconCircleDashed size={16} color="var(--k-mid)" aria-label="не найдено" />
     );
   return (
     <Table mt="sm" fz="sm" verticalSpacing={4} withRowBorders={false}>

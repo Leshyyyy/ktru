@@ -31,14 +31,20 @@ export const ITEM_STATUS: Record<ItemStatus, { label: string; color: string }> =
   failed: { label: "Ошибка", color: "red" },
 };
 
-export const FLAG: Record<ItemFlag, { label: string; hint: string }> = {
+export const FLAG: Record<ItemFlag, { label: string; short: string; hint: string }> = {
   required_missing: {
     label: "Нет обязательной характеристики",
+    short: "нет обяз. характеристики",
     hint: "У предложенного кода есть обязательная характеристика КТРУ, которой нет в описании позиции.",
   },
-  archived_code: { label: "Код в архиве", hint: "Код помечен в каталоге как архивный — подберите действующий." },
+  archived_code: {
+    label: "Код в архиве",
+    short: "код в архиве каталога",
+    hint: "Код помечен в каталоге как архивный — подберите действующий.",
+  },
   low_extraction_confidence: {
     label: "Атрибуты распознаны неуверенно",
+    short: "атрибуты неуверенно",
     hint: "Наименование, бренд или модель извлечены с низкой уверенностью.",
   },
 };
