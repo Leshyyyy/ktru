@@ -32,7 +32,7 @@ python -m pytest ml/tests -q
 python -m ml.ste_eval --ste data/ktru/v2/ste.parquet --catalog data/ktru/v2/catalog_fetched.jsonl --seed 8 --n 1500 \
     --exclude data/ktru/ste/ste_eval_tair.jsonl --out data/ktru/ste/ste_dev.jsonl
 python -m ml.category --ste data/ktru/v2/ste.parquet --catalog data/ktru/v2/catalog_fetched.jsonl \
-    --exclude data/ktru/ste/ste_eval_tair.jsonl data/ktru/ste/ste_dev.jsonl --out ml/artifacts/category.joblib
+    --exclude data/ktru/ste/ste_eval_tair.jsonl data/ktru/ste/ste_dev.jsonl --out ml/models/category.joblib
 KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.calibrate \
     --data data/ktru/v2/eval_samples_v3_dev.jsonl data/ktru/ste/ste_dev.jsonl
 KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.evaluate --data data/ktru/v2/eval_samples_v3_dev.jsonl
@@ -60,7 +60,7 @@ KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.evaluate --dat
 Прежние ~85 с на v3 были на 16 ядрах и с ними не сравнимы. Дольше всего — крупные категории (21.20.23.110 — 9 тыс.
 позиций): в предотбор идёт до PREFILTER_MAX позиций, по каждой сверяются обязательные характеристики.
 
-- Модель категорий (`ml/artifacts/category.joblib`, не в git): 106 тыс. названий СТЕ (≤ 150 на код), 1157 кодов ОКПД2,
+- Модель категорий (`ml/models/category.joblib`, в git и в образе): 106 тыс. названий СТЕ (≤ 150 на код), 1157 кодов ОКПД2,
   66 МБ в памяти, 41 МБ на диске, строится ~90 с. Больше названий на код почти не помогает: 300 — +0,6 п., 1000 — 0.
   Сама по себе на ste_dev угадывает ОКПД2 в 75% (топ-3 — 88%). Без файла модели конвейер ищет по всему каталогу, как раньше.
 - Синтетика v3 просела на 2,6 п. top-1: тексты v3 собраны из текста КТРУ, а 19% их кодов ОКПД2 нет среди карточек СТЕ.
@@ -83,10 +83,10 @@ KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.evaluate --dat
 
 ## Правила
 
-- Данные (`data/`) не коммитить и не класть в тесты. Каталог КТРУ — открытый датасет ЕИС (жюри разрешило), но данные
-  СТЕ (`ste.parquet`, наборы `ste_*.jsonl`, модель категорий) — лицензия датасета не указана, источник zakupki.mos.ru;
-  решение за Егором, до него — только локально. `ml/models/brands.txt` тоже из СТЕ — то же решение.
-  В тестах — только `contracts/fixtures/` и искусственные строки из `ml/tests/`.
+- Источники: каталог КТРУ — открытый датасет ЕИС (жюри разрешило), карточки СТЕ (dantetemplar/zakupki-dataset) —
+  Егор разрешил использовать и класть в git (28.10). Обученные артефакты (`ml/models/`: калибратор, марки, модель
+  категорий) — в git и в образе. Сырые данные (`data/`) не коммитим из-за размера; в тестах — только
+  `contracts/fixtures/` и искусственные строки из `ml/tests/`.
 - `eval_test_candidates` и test-разметку не открывать при разработке; пороги и веса — только по dev
   (`eval_samples_v3_dev.jsonl`, `ste_dev.jsonl`). Набор Таира `ste_eval_tair.jsonl` — отложенная проверка, под него не подбирать.
 - `ml/` не импортирует FastAPI и Celery.

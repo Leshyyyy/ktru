@@ -6,10 +6,10 @@
 карточек дают топ ОКПД2 с долями голосов; позицию КТРУ внутри категорий выбирает уже конвейер (ml/pipeline.py).
 
     python -m ml.category --ste data/ktru/v2/ste.parquet --catalog data/ktru/v2/catalog_fetched.jsonl \
-        --exclude data/ste_eval.jsonl data/ktru/ste/ste_dev.jsonl --out ml/artifacts/category.joblib
+        --exclude data/ktru/ste/ste_eval_tair.jsonl data/ktru/ste/ste_dev.jsonl --out ml/models/category.joblib
 
 Карточки проверочных наборов (--exclude) и их точные повторы по названию в модель не попадают.
-Модель строится из данных СТЕ, поэтому в git не кладётся (лицензия датасета не указана, решение — за Егором).
+Модель лежит в git и попадает в образ, как калибратор (данные СТЕ разрешены Егором, 28.10).
 """
 
 from __future__ import annotations
