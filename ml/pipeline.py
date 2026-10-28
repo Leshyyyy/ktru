@@ -3,14 +3,18 @@
     from ml.pipeline import get_pipeline
     results = get_pipeline().classify_batch(items, catalog_version_id, options)
 
-Конвейер: атрибуты (правила) → поиск кандидатов (вектор + название + обязательные характеристики)
-→ полная сверка характеристик → реранкер для неуверенных → калибровка уверенности → топ-3 с пояснениями.
+Конвейер: атрибуты (правила) → категории ОКПД2 по карточкам СТЕ (ml.category, если модель есть)
+→ поиск кандидатов внутри категорий (вектор + название + обязательные характеристики) → полная сверка характеристик → реранкер для неуверенных → калибровка уверенности → топ-3 с пояснениями.
 """
 
 from __future__ import annotations
 
 import logging
+import math
+import threading
 import time
+from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -26,18 +30,20 @@ from contracts.ml_contracts import (
 )
 
 from . import calibrate as calibration
-from .catalog import Catalog, load_jsonl
+from . import category as categories
+from . import vector_store
+from .catalog import Catalog, entry_from_row, load_jsonl
 from .charmatch import CharMatcher, EntryMatch, build_query_context
 from .config import Settings
 from .explain import explanation, why_not_chosen
 from .extract import RulesExtractor
-from .rerank import NoneReranker, make_reranker
+from .rerank import NoneReranker, effective_reranker, make_reranker
 from .retrieve import MemoryRetriever
 
 log = logging.getLogger(__name__)
 
-W_RETRIEVAL = 0.45
-W_CHARS = 0.55
+W_RETRIEVAL = 0.55
+W_CHARS = 0.45  # на ste_dev / v3 dev 0,45 не хуже 0,55 и на 1 п. лучше на строках с характеристиками
 KEEP = 5  # сколько кандидатов держим после сверки (для признаков и калибровки)
 
 
@@ -65,25 +71,45 @@ class Ranked:
     timings_ms: dict[str, float] = field(default_factory=dict)
 
 
+_LOAD = object()  # модель категорий / эмбеддер: загрузить по настройкам
+
+
+def _mode(settings: Settings, reranker: str) -> dict[str, object]:
+    return {"extractor": "rules", "reranker": reranker, "device": settings.device, "llm_enabled": reranker == "llm"}
+
+
+def make_embedder(settings: Settings):
+    """Эмбеддер по EMBEDDER_MODEL или None (тогда поиск только на TF-IDF). torch импортируется только здесь."""
+    if not settings.embedder_model or settings.embedder_model == "-":
+        return None
+    try:
+        from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
+
+        return SentenceTransformerEmbedder(settings.embedder_model, settings.device)
+    except ImportError:
+        log.warning("EMBEDDER_MODEL=%s, но sentence-transformers не установлен — поиск без эмбеддингов",
+                    settings.embedder_model)
+        return None
+
+
 class KtruPipeline:
     def __init__(self, settings: Optional[Settings] = None, catalog: Optional[Catalog] = None,
-                 calibrator=None, reranker=None, extractor=None):
+                 calibrator=None, reranker=None, extractor=None, category=_LOAD, embedder=_LOAD, vectors=None):
         t0 = time.perf_counter()
         self.settings = settings or Settings()
         self.catalog = catalog or Catalog(load_jsonl(self.settings.resolved_catalog_path()))
         self.matcher = CharMatcher(self.catalog)
-        embedder = None
-        if self.settings.embedder_model:
-            from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
-
-            embedder = SentenceTransformerEmbedder(self.settings.embedder_model, self.settings.device)
-        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder)
+        if embedder is _LOAD:
+            embedder = make_embedder(self.settings)
+        self.retriever = MemoryRetriever(self.catalog, self.matcher, embedder, cache_dir=self.settings.embed_cache_dir,
+                                         vectors=vectors)
         self.extractor = extractor or RulesExtractor()
         if reranker is not None:
             self.reranker, rerank_degraded = reranker, False
         else:
             self.reranker, rerank_degraded = make_reranker(self.settings)
         self.calibrator = calibrator or calibration.load(self.settings.calibrator_path)
+        self.category = categories.load(self.settings.category_model_path) if category is _LOAD else category
         # LLM была нужна (hybrid/llm-извлечение или llm-реранкер), но её нет → режим degraded.
         self.llm_wanted_but_missing = rerank_degraded or (
             self.settings.extractor in ("llm", "hybrid") and not self.settings.llm_enabled
@@ -95,9 +121,20 @@ class KtruPipeline:
     def is_ready(self) -> dict[str, bool]:
         return {"models": True, "catalog": len(self.retriever.items) > 0}
 
+    def describe_mode(self) -> dict[str, object]:
+        """Фактический режим для GET /config (схема Mode в openapi.yaml). Не часть контракта Pipeline: бэкенд
+        вызывает его, если он есть (backend/core/ml.py pipeline_mode). Извлечение пока только по правилам."""
+        return _mode(self.settings, self.reranker.name)
+
+    def add_examples(self, pairs: Iterable[tuple[str, str]] | dict[str, str]) -> int:
+        """Подтверждённые пользователями пары «текст → код» (FR-4.7). Повтор текста заменяет код. → число пар."""
+        pairs = dict(pairs.items() if isinstance(pairs, dict) else pairs)
+        self.retriever.add_examples(pairs)
+        return len(pairs)
+
     def classify_batch(self, items: list[RawItem], catalog_version_id: str = "",
                        options: Optional[PipelineOptions] = None) -> list[ClassificationResult]:
-        """catalog_version_id пока не используется: в памяти одна версия каталога. Появится вместе с pgvector."""
+        """Классификация по каталогу этого экземпляра. Версии каталога различает CatalogVersions ниже."""
         opts = options or PipelineOptions()
         ranked = self.rank(items, use_feedback=opts.use_feedback, options=opts)
         mode = "degraded" if (opts.use_llm and self.llm_wanted_but_missing) else "normal"
@@ -146,9 +183,16 @@ class KtruPipeline:
         t_extract = time.perf_counter() - t
 
         t = time.perf_counter()
+        cats = None
+        if self.category is not None:
+            texts = [categories.query_text(it.text, it.columns.get("name", "")) for it in items]
+            cats = [probs for probs, _ in self.category.predict_batch(texts)]
+        t_category = time.perf_counter() - t
+
+        t = time.perf_counter()
         queries = [SearchQuery(text=it.text, extracted=ex, catalog_version_id="", top_k=opts.top_k)
                    for it, ex in zip(items, extracted)]
-        cands = self.retriever.search_batch(queries, use_feedback=use_feedback)
+        cands = self.retriever.search_batch(queries, use_feedback=use_feedback, categories=cats)
         t_retrieve = time.perf_counter() - t
 
         t = time.perf_counter()
@@ -178,7 +222,8 @@ class KtruPipeline:
         for r in ranked:
             self._features(r, use_feedback)
         per = {k: v * 1000 / n for k, v in
-               (("extract", t_extract), ("retrieve", t_retrieve), ("match", t_match), ("rerank", t_rerank))}
+               (("extract", t_extract), ("category", t_category), ("retrieve", t_retrieve), ("match", t_match),
+                ("rerank", t_rerank))}
         per["total"] = sum(per.values())
         for r in ranked:
             r.timings_ms = dict(per)
@@ -189,8 +234,7 @@ class KtruPipeline:
         second = r.candidates[1].final if len(r.candidates) > 1 else 0.0
         return not (top >= opts.fast_path_min_score and top - second >= opts.fast_path_min_margin)
 
-    @staticmethod
-    def _apply_rerank(r: Ranked, rr) -> None:
+    def _apply_rerank(self, r: Ranked, rr) -> None:
         score = dict(zip(rr.ordered_codes, rr.scores))
         if not score:
             return
@@ -198,7 +242,8 @@ class KtruPipeline:
         for s in r.candidates:
             raw = score.get(s.ktru_code)
             s.rerank = 0.0 if raw is None or hi == lo else (raw - lo) / (hi - lo)
-            s.final = 0.5 * s.final + 0.5 * s.rerank
+            w = self.settings.rerank_weight
+            s.final = (1 - w) * s.final + w * s.rerank
         r.candidates.sort(key=lambda s: -s.final)
 
     def _features(self, r: Ranked, use_feedback: bool) -> None:
@@ -242,7 +287,8 @@ class KtruPipeline:
                 ktru_code=s.ktru_code,
                 name=s.candidate.name,
                 okpd2_code=s.candidate.okpd2_code,
-                confidence=round(min(max(c, 0.0), 1.0), 4),
+                # Вниз, а не к ближайшему: после округления сумма по позиции должна остаться ≤ 1.
+                confidence=math.floor(min(max(c, 0.0), 1.0) * 10_000) / 10_000,
                 features={k: round(v, 4) for k, v in s.features.items()},
                 explanation=explanation(s.match) if rank == 1 else None,
                 why_not_chosen=None if rank == 1 else why_not_chosen(
@@ -251,7 +297,9 @@ class KtruPipeline:
             ))
         ex = r.extracted
         flags = []
-        if top and top[0].match.required_missing:
+        # «Нет обязательной характеристики» — только если она и решает выбор: в топ-3 есть одноимённая позиция.
+        # Иначе флаг стоял у двух третей живых строк (e2e, 28.10), в том числе при уверенности 100%.
+        if top and top[0].match.required_missing and any(s.candidate.name == top[0].candidate.name for s in top[1:]):
             flags.append("required_missing")
         if ex and ex.field_confidence.get("name", 1.0) < 0.5:
             flags.append("low_extraction_confidence")
@@ -264,12 +312,122 @@ class KtruPipeline:
         )
 
 
-_PIPELINE: Optional[KtruPipeline] = None
+class CatalogVersions:
+    """Pipeline поверх нескольких версий каталога (FR-8.1: новая версия без перезапуска воркера).
+
+    Каждая задача обрабатывается той версией каталога, которая в ней закреплена (catalog_version_id),
+    поэтому коды ML всегда проходят проверку бэкенда по каталогу задачи. Новую версию бэкенд передаёт строками
+    из catalog_items: load_version(version_id, rows). Индекс строится, пока задачи обслуживает старая версия,
+    затем подменяется. В памяти держится не больше KEEP версий: текущая и предыдущая — для задач, которые
+    стартовали до импорта. Модели, калибратор и реранкер общие для всех версий.
+    """
+
+    KEEP = 2
+
+    def __init__(self, settings: Optional[Settings] = None, calibrator=None, reranker=None, extractor=None,
+                 category=_LOAD, embedder=_LOAD):
+        self.settings = settings or Settings()
+        self._calibrator = calibrator or calibration.load(self.settings.calibrator_path)
+        # Модель категорий от версии каталога не зависит: коды ОКПД2, которых нет в версии, поиск пропускает.
+        self._category = categories.load(self.settings.category_model_path) if category is _LOAD else category
+        # Эмбеддер один на все версии; векторы версии из базы хранятся в catalog_items.embedding (pgvector).
+        self._embedder = make_embedder(self.settings) if embedder is _LOAD else embedder
+        self._store = (vector_store.connect(self.settings.database_url, self.settings.embedding_dim)
+                       if self._embedder is not None else None)
+        self._reranker = reranker
+        self._extractor = extractor or RulesExtractor()
+        self._versions: OrderedDict[str, KtruPipeline] = OrderedDict()
+        self._examples: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def load_version(self, version_id: str, rows: Iterable[dict]) -> int:
+        """Строит индекс версии каталога из строк CatalogRow (dict). Долго (~50 с на полном КТРУ) — вызывать
+        из отдельного потока; классификация других версий в это время продолжается. → число позиций."""
+        return self._add(version_id, Catalog(entry_from_row(r) for r in rows), self._db_vectors(version_id))
+
+    def load_file(self, version_id: str, path: str) -> int:
+        # Файл без версии — тот же, что migrate загрузил в базу: векторы пишутся в последнюю готовую версию.
+        db_version = version_id or (self._store.latest_version() if self._store is not None else None)
+        return self._add(version_id, Catalog(load_jsonl(path)), self._db_vectors(db_version))
+
+    def _db_vectors(self, version_id: Optional[str]):
+        """Векторы наименований версии из catalog_items.embedding (pgvector); пустые сначала досчитываются.
+        Без базы (DATABASE_URL) — None: retriever посчитает векторы сам и закэширует на диске."""
+        if self._store is None or not version_id:
+            return None
+        try:
+            self._store.fill_catalog(version_id, self._embedder)
+            return self._store.catalog_vectors(version_id)
+        except Exception:  # noqa: BLE001 — база недоступна: векторы считаются в памяти, классификация работает
+            log.exception("pgvector недоступен, эмбеддинги каталога считаются в памяти")
+            return None
+
+    def _add(self, version_id: str, catalog: Catalog, vectors=None) -> int:
+        engine = KtruPipeline(self.settings, catalog=catalog, calibrator=self._calibrator,
+                              reranker=self._reranker, extractor=self._extractor, category=self._category,
+                              embedder=self._embedder, vectors=vectors)
+        self._reranker = self._reranker or engine.reranker
+        with self._lock:
+            engine.add_examples(self._examples)
+            self._versions[version_id] = engine
+            self._versions.move_to_end(version_id)
+            while len(self._versions) > self.KEEP:
+                old, _ = self._versions.popitem(last=False)
+                log.info("Версия каталога %s выгружена из памяти", old)
+        return len(catalog)
+
+    def loaded_versions(self) -> list[str]:
+        """Загруженные версии, последняя — текущая. Бэкенд закрепляет за новой задачей последнюю."""
+        with self._lock:
+            return list(self._versions)
+
+    def add_examples(self, pairs: Iterable[tuple[str, str]] | dict[str, str]) -> int:
+        pairs = dict(pairs.items() if isinstance(pairs, dict) else pairs)
+        with self._lock:
+            self._examples.update(pairs)
+            engines = list(self._versions.values())
+        for engine in engines:
+            engine.add_examples(pairs)
+        return len(pairs)
+
+    def describe_mode(self) -> dict[str, object]:
+        reranker = self._reranker.name if self._reranker is not None else effective_reranker(self.settings)
+        return _mode(self.settings, reranker)
+
+    def is_ready(self) -> dict[str, bool]:
+        with self._lock:
+            return {"models": True, "catalog": any(e.is_ready()["catalog"] for e in self._versions.values())}
+
+    def classify_batch(self, items: list[RawItem], catalog_version_id: str = "",
+                       options: Optional[PipelineOptions] = None) -> list[ClassificationResult]:
+        with self._lock:
+            engine = self._versions.get(catalog_version_id)
+            if engine is None and not catalog_version_id and self._versions:
+                engine = next(reversed(self._versions.values()))  # без версии — текущая (оценка, отладка)
+            if engine is None and "" in self._versions:
+                # Каталог из файла без указанной версии (get_pipeline() по умолчанию) обслуживает задачи любой
+                # версии — так работает режим, в котором migrate и worker-ml читают один и тот же файл.
+                engine = self._versions[""]
+        if engine is None:
+            error = f"Версия каталога {catalog_version_id or '(не указана)'} не загружена в ML-воркер."
+            return [ClassificationResult(item_id=it.item_id, error=error) for it in items]
+        return engine.classify_batch(items, catalog_version_id, options)
 
 
-def get_pipeline() -> KtruPipeline:
-    """Один экземпляр на процесс воркера: каталог и модели грузятся один раз."""
+_PIPELINE: Optional[CatalogVersions] = None
+
+
+def get_pipeline(load_file: bool = True) -> CatalogVersions:
+    """Один экземпляр на процесс воркера.
+
+    load_file=True — сразу загрузить каталог из KTRU_CATALOG_PATH под версией KTRU_CATALOG_VERSION_ID
+    (или «» — тогда он обслуживает задачи без версии). Бэкенд, который берёт каталог из базы, вызывает
+    get_pipeline(load_file=False), затем load_version(version_id, rows) для версии из catalog_versions.
+    """
     global _PIPELINE
     if _PIPELINE is None:
-        _PIPELINE = KtruPipeline()
+        _PIPELINE = CatalogVersions()
+        if load_file:
+            settings = _PIPELINE.settings
+            _PIPELINE.load_file(settings.catalog_version_id, str(settings.resolved_catalog_path()))
     return _PIPELINE

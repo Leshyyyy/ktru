@@ -7,6 +7,11 @@ joblib
 httpx          # Jev через OpenRouter (RERANKER=llm)
 pytest
 
-# Опционально: эмбеддер (EMBEDDER_MODEL) и cross-encoder (RERANKER=cross_encoder)
+# Эмбеддер (EMBEDDER_MODEL, по умолчанию включён — ТЗ) и cross-encoder: torch (CPU-сборка) и sentence-transformers.
+# Без них конвейер работает на TF-IDF. Векторы в pgvector — psycopg и pgvector, они уже есть в образе бэкенда.
 # torch
 # sentence-transformers
+
+# Только офлайн-скрипты (ml.fetch_catalog, ml.build_brands) — worker-ml их не запускает, в образ бэкенда не нужен.
+# Если каталог будут скачивать при сборке образа, pyarrow нужно добавить в backend/requirements.in.
+# pyarrow

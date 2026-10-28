@@ -82,3 +82,92 @@ def test_required_missing_flag_and_explanation(synth_pipeline):
     assert r.predictions[0].explanation
     for p in r.predictions[1:]:
         assert p.why_not_chosen
+
+
+def test_query_interval_picks_matching_range(synth_pipeline):
+    (r,) = _run(synth_pipeline, "Шприц одноразовый, объем от 3 до 5 мл")
+    assert r.predictions[0].ktru_code == "77.77.02.000-00000005"
+
+
+def test_missing_required_does_not_push_to_other_group(synth_pipeline):
+    # У «Иглы спинальной» обязательная характеристика не указана — это не повод уходить в другую группу.
+    (r,) = _run(synth_pipeline, "Игла спинальная")
+    assert r.predictions[0].okpd2_code == "77.77.04.000"
+
+
+def test_rounded_confidences_sum_at_most_one(fixture_pipeline):
+    for text in ("Бумага офисная А4 80 г/м2", "Принтер", "Ноутбук", "Шприц одноразовый 5 мл трёхкомпонентный"):
+        (r,) = _run(fixture_pipeline, text)
+        assert sum(p.confidence for p in r.predictions) <= 1.0
+
+
+def test_no_key_default_mode_is_normal(fixture_pipeline):
+    (r,) = _run(fixture_pipeline, "Принтер лазерный")
+    assert r.mode == "normal"
+
+
+class _FakeEmbedder:
+    """Детерминированные «эмбеддинги» по буквам — проверяем путь с векторами без скачивания модели."""
+
+    model_name = "fake/letters"
+    dim = 64
+    calls = 0
+
+    def embed(self, texts, kind="query"):
+        import numpy as np
+
+        _FakeEmbedder.calls += 1
+        out = []
+        for t in texts:
+            v = np.zeros(64, dtype=np.float32)
+            for ch in t.lower():
+                v[ord(ch) % 64] += 1.0
+            out.append((v / (np.linalg.norm(v) or 1.0)).tolist())
+        return out
+
+
+def test_dense_retrieval_and_embedding_cache(tmp_path):
+    from ml.catalog import Catalog, entry_from_row
+    from ml.charmatch import CharMatcher
+    from ml.retrieve import MemoryRetriever
+
+    from conftest import SYNTH_ROWS
+
+    catalog = Catalog([entry_from_row(r) for r in SYNTH_ROWS])
+    first = MemoryRetriever(catalog, CharMatcher(catalog), _FakeEmbedder(), cache_dir=tmp_path)
+    assert first.dense is not None and list(tmp_path.glob("catalog_fake__letters_*.npy"))
+    calls = _FakeEmbedder.calls
+    second = MemoryRetriever(catalog, CharMatcher(catalog), _FakeEmbedder(), cache_dir=tmp_path)
+    assert _FakeEmbedder.calls == calls  # каталог взят из кэша, не пересчитан
+    assert (second.dense == first.dense).all()
+
+
+def test_vectors_from_store_are_used_instead_of_embedding_catalog():
+    import numpy as np
+    from ml.catalog import Catalog, entry_from_row
+    from ml.charmatch import CharMatcher
+    from ml.retrieve import MemoryRetriever
+    from ml.vector_store import pad
+
+    from conftest import SYNTH_ROWS
+
+    catalog = Catalog([entry_from_row(r) for r in SYNTH_ROWS])
+    emb = _FakeEmbedder()
+    own = MemoryRetriever(catalog, CharMatcher(catalog), emb)
+    calls = _FakeEmbedder.calls
+    # Векторы позиций, как их отдаёт pgvector: дополнены нулями до vector(1024), косинус тот же.
+    stored = {e.ktru_code: pad(own.dense[own.name_idx[j]][None, :], 1024)[0] for j, e in enumerate(own.items)}
+    from_db = MemoryRetriever(catalog, CharMatcher(catalog), emb, vectors=stored)
+    assert _FakeEmbedder.calls == calls  # каталог не пересчитывался
+    assert np.allclose(from_db.dense, own.dense)
+
+
+def test_required_missing_only_when_it_decides():
+    from ml.catalog import entry_from_row
+
+    from conftest import SYNTH_ROWS, make_pipeline
+
+    # Одноимённой позиции нет — недостающая характеристика выбор не решает, флаг не нужен.
+    pipe = make_pipeline([entry_from_row(r) for r in SYNTH_ROWS if r["ktru_code"] != "77.77.01.000-00000017"])
+    (r,) = _run(pipe, "Ноутбук")
+    assert r.predictions[0].ktru_code == "77.77.01.000-00000016" and "required_missing" not in r.flags
