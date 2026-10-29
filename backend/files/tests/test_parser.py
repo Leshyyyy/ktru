@@ -152,3 +152,55 @@ def test_parse_rows_row_index_with_skipped_rows_and_header_offset(tmp_path: Path
 
     assert items[2].row_index == 4
     assert items[2].raw_text == "Скрепки"
+
+
+def test_parse_rows_long_text_preserved(tmp_path: Path):
+    """
+    Проверяет крайний случай раздела 8:
+    Длинный текст (> 2000 символов) полностью сохраняется в raw_text и raw_row.
+    """
+    csv_file = tmp_path / "long_text_spec.csv"
+    long_desc = "Характеристика " + ("очень подробное описание товара " * 80)
+    assert len(long_desc) > 2000
+
+    with open(csv_file, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Наименование", "Технические требования"])
+        writer.writerow(["Серверный шкаф 42U", long_desc])
+
+    mapping = [
+        ColumnMappingItem(index=0, role=ColumnRole.NAME),
+        ColumnMappingItem(index=1, role=ColumnRole.DESCRIPTION),
+    ]
+
+    items = parse_rows(csv_file, header_row=0, column_mapping=mapping)
+    assert len(items) == 1
+    assert items[0].raw_text.startswith("Серверный шкаф 42U Характеристика")
+    assert len(items[0].raw_text) > 2000
+    assert items[0].raw_row[1] == long_desc.strip()
+
+
+def test_parse_rows_file_matrix_limit_exceeded(tmp_path: Path, monkeypatch):
+    """
+    Проверяет крайний случай раздела 8:
+    Файл больше 5000 строк вызывает LimitExceededError с подсказкой разбить файл.
+    """
+    csv_file = tmp_path / "exceed_matrix.csv"
+    # Для быстроты теста понижаем лимит через monkeypatch
+    monkeypatch.setattr("backend.files.parser.MAX_ROWS_IN_FILE", 10)
+
+    with open(csv_file, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Наименование", "Кол-во"])
+        for i in range(15):
+            writer.writerow([f"Товар {i}", "1"])
+
+    mapping = [
+        ColumnMappingItem(index=0, role=ColumnRole.NAME),
+        ColumnMappingItem(index=1, role=ColumnRole.QUANTITY),
+    ]
+
+    with pytest.raises(LimitExceededError) as exc_info:
+        parse_rows(csv_file, header_row=0, column_mapping=mapping)
+    assert "превышает лимит 10" in exc_info.value.message
+
