@@ -1,0 +1,1173 @@
+openapi: 3.0.3
+info:
+  title: AI-классификатор КТРУ
+  version: 1.0.0
+  description: |
+    Контракт между фронтендом и бэкендом.
+
+    Договорённости:
+    * Уверенность (`confidence`) — число от 0 до 1; интерфейс показывает её в процентах.
+    * Всё, что может идти дольше двух секунд, асинхронно и отвечает 202 с идентификатором.
+    * Ошибки всегда в формате `{"error": {"code", "message", "details"}}`; `message` — по-русски и для человека.
+    * Ошибки валидации запроса (не та схема, неверный параметр) — 400 `invalid_request`.
+      FastAPI по умолчанию отвечает на них 422 в своём формате `{"detail": [...]}` — бэкенд
+      обязан переопределить обработчик `RequestValidationError`. Код 422 у нас означает только
+      бизнес-ошибки: `file_unreadable`, `mapping_invalid`, `limit_exceeded`.
+    * Время — UTC, формат ISO 8601.
+    * CORS: бэкенд добавляет `X-Unreviewed-Count` и `Content-Disposition` в `expose_headers`, иначе фронт их не прочитает.
+      Имя выгружаемого файла с кириллицей передаётся как `filename*=UTF-8''...`.
+    * Размер файла: лимит nginx (`client_max_body_size`) выше 50 МБ, сами 50 МБ проверяет приложение и отвечает
+      413 `file_too_large` в нашем формате, иначе nginx вернёт HTML.
+    * Для фронтенда: `npx @stoplight/prism-cli mock contracts/openapi.yaml` поднимает мок-сервер на примерах отсюда.
+servers:
+  - url: /api/v1
+tags:
+  - name: files
+  - name: jobs
+  - name: items
+  - name: classify
+  - name: catalog
+  - name: quality
+  - name: system
+
+paths:
+  /files:
+    post:
+      tags: [files]
+      summary: Загрузить файл спецификации
+      description: |
+        Принимает xlsx, csv или pdf до 50 МБ. Возвращает листы, предпросмотр и предложенные роли колонок.
+        Отвечает за секунды при любом размере файла: xlsx и xls читаются быстрым читателем (python-calamine),
+        для pdf разбираются только первые 3 страницы,
+        поэтому `row_count` у pdf равен null — точное число позиций станет известно при разборе в задаче.
+        Если такой же файл (по sha256) уже обрабатывался, в ответе `duplicate_of_job_id`; если уже встречались
+        такие же заголовки колонок — `layout_hint` с ранее подтверждённым сопоставлением (интерфейс подставляет его заранее).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Файл принят.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileInfo' }
+              examples:
+                xlsx:
+                  value:
+                    file_id: 7f3c2d1e-5a64-4b0b-9a3e-0c1f5c8d9a10
+                    filename: spec_zakupka_142.xlsx
+                    size_bytes: 48213
+                    duplicate_of_job_id: null
+                    layout_hint: null
+                    sheets:
+                      - name: Лист1
+                        row_count: 214
+                        header_row: 0
+                        columns:
+                          - { index: 0, header: Наименование товара, sample: ["Ноутбук Lenovo IdeaPad 3 15IAU7", "Принтер лазерный Xerox B230"], suggested_role: name }
+                          - { index: 1, header: Характеристики, sample: ["15.6\", Core i5, 16 ГБ", "A4, 34 стр/мин"], suggested_role: characteristics }
+                          - { index: 2, header: Кол-во, sample: ["12", "3"], suggested_role: quantity }
+                          - { index: 3, header: Ед. изм., sample: ["шт", "шт"], suggested_role: unit }
+                        preview:
+                          - ["Ноутбук Lenovo IdeaPad 3 15IAU7", "15.6\", Core i5, 16 ГБ", "12", "шт"]
+                          - ["Принтер лазерный Xerox B230", "A4, 34 стр/мин", "3", "шт"]
+        '413': { $ref: '#/components/responses/FileTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /jobs:
+    post:
+      tags: [jobs]
+      summary: Создать задачу обработки
+      description: Отвечает сразу (< 1 с). Обработка идёт в очереди; состояние — `GET /jobs/{job_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobCreate' }
+            example:
+              file_id: 7f3c2d1e-5a64-4b0b-9a3e-0c1f5c8d9a10
+              sheet: Лист1
+              header_row: 0
+              column_mapping:
+                - { index: 0, role: name }
+                - { index: 1, role: characteristics }
+                - { index: 2, role: quantity }
+                - { index: 3, role: unit }
+              options: { use_llm: true, use_feedback: true }
+      responses:
+        '202':
+          description: Задача поставлена в очередь.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/NotReady' }
+    get:
+      tags: [jobs]
+      summary: Список задач
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Задачи от новых к старым.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, page, page_size]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Job' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+
+  /jobs/{job_id}:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    get:
+      tags: [jobs]
+      summary: Статус и прогресс задачи
+      description: Опрашивать раз в 1–2 секунды, пока статус `queued`, `parsing` или `processing`.
+      responses:
+        '200':
+          description: Состояние задачи.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              examples:
+                processing:
+                  value:
+                    job_id: 2b6a7f0e-9d1c-4c6a-8f55-1e4a2c9d7b33
+                    status: processing
+                    filename: spec_zakupka_142.xlsx
+                    file_id: 7f3c2d1e-5a64-4b0b-9a3e-0c1f5c8d9a10
+                    total_items: 214
+                    processed_items: 100
+                    failed_items: 0
+                    progress: 0.467
+                    eta_seconds: 38
+                    effective_mode: normal
+                    catalog_version_id: 5d2e9b34-1f7a-4e60-b0c4-6a8d3f1e2c77
+                    summary: { green: 71, yellow: 22, red: 7, confirmed: 0, corrected: 0 }
+                    error: null
+                    error_code: null
+                    created_at: '2026-10-12T09:30:00Z'
+                    started_at: '2026-10-12T09:30:01Z'
+                    finished_at: null
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [jobs]
+      summary: Удалить задачу и её данные
+      description: |
+        Работает в любом статусе. Если задача ещё обрабатывается, воркер при очередной пачке видит, что задачи
+        больше нет, и спокойно завершается без ошибки.
+      responses:
+        '204': { description: Удалено. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{job_id}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      tags: [jobs]
+      summary: Отменить обработку
+      responses:
+        '200':
+          description: Отмена запрошена; текущая пачка досчитывается.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /jobs/{job_id}/items:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    get:
+      tags: [items]
+      summary: Позиции задачи с предсказаниями
+      description: Доступно во время обработки — вернутся уже обработанные позиции.
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: band
+          in: query
+          description: Фильтр по цвету уверенности.
+          schema: { type: string, enum: [green, yellow, red] }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ItemStatus' }
+        - name: q
+          in: query
+          description: Поиск по исходному тексту.
+          schema: { type: string }
+        - name: flag
+          in: query
+          description: Только позиции с указанным предупреждением.
+          schema: { $ref: '#/components/schemas/ItemFlag' }
+        - name: group_id
+          in: query
+          description: Только позиции одной группы повторов.
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [row_index, confidence_asc], default: row_index }
+      responses:
+        '200':
+          description: Страница позиций.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemList' }
+              example:
+                total: 214
+                page: 1
+                page_size: 50
+                items:
+                  - item_id: a1c4e8f2-3b7d-4a19-9c60-2d5e7f8a1b02
+                    job_id: 2b6a7f0e-9d1c-4c6a-8f55-1e4a2c9d7b33
+                    row_index: 0
+                    raw_text: Ноутбук Lenovo IdeaPad 3 15IAU7 15.6", Core i5, 16 ГБ
+                    status: processed
+                    band: green
+                    path: fast
+                    flags: []
+                    group_id: null
+                    group_size: 1
+                    extracted:
+                      name: Ноутбук
+                      brand: Lenovo
+                      model: IdeaPad 3 15IAU7
+                      quantity: 12
+                      unit: шт
+                      characteristics: { Диагональ: '15.6"', Процессор: Core i5, ОЗУ: 16 ГБ }
+                      method: hybrid
+                      field_confidence: { name: 0.97, brand: 0.99, model: 0.94 }
+                    predictions:
+                      - rank: 1
+                        ktru_code: 99.99.01.000-00000001
+                        okpd2_code: 99.99.01.000
+                        name: Ноутбук
+                        confidence: 0.94
+                        explanation: Совпали наименование и 3 из 3 обязательных характеристик.
+                        characteristic_matches:
+                          - { name: Диагональ экрана, expected: 'от 13"', found: '15.6"', status: match, required: true }
+                          - { name: Объём ОЗУ, expected: 'от 8 ГБ', found: 16 ГБ, status: match, required: true }
+                        why_not_chosen: null
+                      - { rank: 2, ktru_code: 99.99.01.000-00000002, okpd2_code: 99.99.01.000, name: Ноутбук игровой, confidence: 0.31, explanation: null, why_not_chosen: 'В тексте нет признаков игровой модели: дискретной видеокарты и частоты экрана от 120 Гц.', characteristic_matches: [] }
+                      - { rank: 3, ktru_code: 99.99.02.000-00000001, okpd2_code: 99.99.02.000, name: Монитор, confidence: 0.04, explanation: null, why_not_chosen: 'Позиция описывает ноутбук, а не отдельный монитор.', characteristic_matches: [] }
+                    final: { ktru_code: 99.99.01.000-00000001, name: Ноутбук, source: prediction, confidence: 0.94 }
+                    error: null
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{job_id}/confirm-bulk:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    post:
+      tags: [items]
+      summary: Подтвердить все позиции не ниже порога уверенности
+      description: |
+        Затрагивает только позиции со статусом `processed` или `needs_review`, у которых уверенность
+        предсказания с rank = 1 не ниже `min_confidence`. Уже подтверждённые, исправленные,
+        упавшие и необработанные позиции не меняются. Можно вызывать во время обработки.
+        По умолчанию позиции с предупреждениями (`flags`) пропускаются — см. `skip_flagged`.
+        Решения пишутся с `via = bulk`: они не попадают в эталонные примеры и не учитываются в `green_correction_rate`,
+        иначе модель училась бы на собственных непроверенных ответах.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [min_confidence]
+              properties:
+                min_confidence: { type: number, minimum: 0, maximum: 1, example: 0.85 }
+                skip_flagged:
+                  type: boolean
+                  default: true
+                  description: Не подтверждать позиции с предупреждениями (`flags` не пусто). Их нужно посмотреть глазами.
+      responses:
+        '200':
+          description: Сколько позиций подтверждено.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [confirmed_count]
+                properties:
+                  confirmed_count: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{job_id}/export:
+    parameters:
+      - { $ref: '#/components/parameters/JobId' }
+    get:
+      tags: [jobs]
+      summary: Выгрузить результат
+      description: |
+        Исходные колонки плюс: код КТРУ, наименование КТРУ, уверенность (%), статус, источник (модель / пользователь),
+        предупреждения. Значения, начинающиеся с `=`, `+`, `-`, `@`, экранируются. До 1000 позиций формируется синхронно.
+        Доступно в статусах `done`, `done_with_errors` и `cancelled`, иначе 409 `invalid_state`.
+        Для упавших позиций колонки с кодом пустые, в колонке статуса — «ошибка».
+        Для отменённой задачи (`cancelled`) экспорт тоже доступен: выгружается то, что успело обработаться,
+        остальные позиции получают статус «не обработана».
+        В xlsx все значения пишутся ячейками строкового типа (иначе библиотека превратит `=...` в формулу, а апостроф
+        был бы виден); апостроф перед `=`, `+`, `-`, `@` нужен только в csv.
+        `format=source` (по умолчанию) — тот же формат, что у загруженного файла; для pdf выдаётся xlsx.
+        Число непроверенных позиций (статусы `processed` и `needs_review`) приходит в заголовке `X-Unreviewed-Count`.
+        Если `allow_unreviewed=false` и такие позиции есть, ответ 409 `unreviewed_items`.
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [source, xlsx, csv, json], default: source }
+        - name: allow_unreviewed
+          in: query
+          description: Разрешить выгрузку, если остались непроверенные позиции. По умолчанию разрешено.
+          schema: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Файл.
+          headers:
+            X-Unreviewed-Count:
+              description: Сколько позиций в выгрузке не проверено человеком.
+              schema: { type: integer }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Задача не завершена (`invalid_state`) либо есть непроверенные позиции при `allow_unreviewed=false` (`unreviewed_items`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                state:
+                  value: { error: { code: invalid_state, message: 'Задача ещё обрабатывается.', details: { status: processing } } }
+                unreviewed:
+                  value: { error: { code: unreviewed_items, message: 'Осталось 38 непроверенных позиций.', details: { unreviewed: 38 } } }
+
+  /items/{item_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ItemId' }
+    get:
+      tags: [items]
+      summary: Карточка позиции
+      responses:
+        '200':
+          description: Позиция.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /items/{item_id}/confirm:
+    parameters:
+      - { $ref: '#/components/parameters/ItemId' }
+    post:
+      tags: [items]
+      summary: Подтвердить предложенный код
+      description: |
+        Фиксирует решение `confirm` для предсказания с rank = 1, статус позиции становится `confirmed`,
+        пара «текст → код» уходит в эталонные примеры. Повторный вызов ничего не меняет и отвечает 200.
+        409 `invalid_state` — у позиции нет предсказаний (статус `pending` или `failed`).
+      responses:
+        '200':
+          description: Обновлённая позиция.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /items/{item_id}/decision:
+    parameters:
+      - { $ref: '#/components/parameters/ItemId' }
+    put:
+      tags: [items]
+      summary: Исправить код вручную
+      description: |
+        Фиксирует решение `correct`, статус `corrected`, пара «текст → код» уходит в эталонные примеры.
+        Если присланный код совпадает с предсказанием rank = 1, это считается подтверждением (`confirm`,
+        статус `confirmed`). Код должен существовать в версии каталога, с которой работает задача;
+        иначе 404 `not_found` с `details.object = ktru_code`.
+        Работает и для упавших позиций (`failed`): пользователь может проставить код вручную.
+        Для позиций в статусе `pending` — 409 `invalid_state`: воркер ещё не дошёл до позиции и перезаписал бы решение.
+        Решение пишется с `via = manual`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ktru_code]
+              properties:
+                ktru_code: { type: string, example: 99.99.01.000-00000002 }
+                reason:
+                  type: string
+                  nullable: true
+                  maxLength: 500
+                  description: Необязательный комментарий, зачем исправлено. Попадает в журнал решений.
+      responses:
+        '200':
+          description: Обновлённая позиция.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /classify:
+    post:
+      tags: [classify]
+      summary: Классифицировать несколько строк синхронно
+      description: До 20 текстов, ответ обычно за 1–3 секунды. Для демо и отладки; ничего не сохраняет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    required: [text]
+                    properties:
+                      text: { type: string }
+            example:
+              items:
+                - text: Бумага офисная А4, 80 г/м2, 500 листов, Svetocopy
+      responses:
+        '200':
+          description: Результаты в том же порядке.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/ClassifyResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/NotReady' }
+
+  /catalog/search:
+    get:
+      tags: [catalog]
+      summary: Поиск по каталогу КТРУ
+      description: |
+        Для автодополнения при ручной правке. Ищет по началу кода и по тексту наименования.
+        При правке позиции фронт передаёт `version_id` = `catalog_version_id` задачи,
+        чтобы предлагать только коды, которые бэкенд примет.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2 }
+        - { $ref: '#/components/parameters/CatalogVersionId' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: Найденные позиции каталога.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CatalogItem' }
+
+  /catalog/items/{ktru_code}:
+    get:
+      tags: [catalog]
+      summary: Позиция каталога с характеристиками
+      parameters:
+        - name: ktru_code
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: '#/components/parameters/CatalogVersionId' }
+      responses:
+        '200':
+          description: Позиция.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CatalogItem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /catalog/versions:
+    get:
+      tags: [catalog]
+      summary: Версии каталога
+      responses:
+        '200':
+          description: От новых к старым.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CatalogVersion' }
+
+  /catalog/import:
+    post:
+      tags: [catalog]
+      summary: Загрузить новую версию каталога без передеплоя
+      description: |
+        JSONL, одна позиция на строку, формат строки — схема `CatalogRow`. Долгая операция; статус — в `GET /catalog/versions`.
+        Идущие задачи не затрагиваются. После загрузки строк бэкенд просит ML построить эмбеддинги
+        (`CatalogIndexer.index_version` из `ml_contracts.py`); версия получает статус `ready` только после этого.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                note: { type: string }
+      responses:
+        '202':
+          description: Импорт запущен.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CatalogVersion' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /quality/run:
+    post:
+      tags: [quality]
+      summary: Запустить оценку на размеченном наборе
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [split]
+              properties:
+                split: { type: string, enum: [dev, test] }
+      responses:
+        '202':
+          description: Оценка запущена.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityRun' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /quality/latest:
+    get:
+      tags: [quality]
+      summary: Последние результаты оценки
+      responses:
+        '200':
+          description: По одному последнему прогону на каждый набор.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dev: { $ref: '#/components/schemas/QualityRun' }
+                  test: { $ref: '#/components/schemas/QualityRun' }
+
+  /stats:
+    get:
+      tags: [system]
+      summary: Сводка по качеству и скорости
+      description: |
+        Для мини-дашборда. Считается SQL-запросами по данным, отдельной системы метрик нет.
+        `green_correction_rate` = corrected / (confirmed_manual + corrected) среди позиций, которые модель посчитала
+        зелёными и которые человек проверил (решения `via = manual`). Массово подтверждённые (`via = bulk`)
+        и непросмотренные позиции не считаются. Это прямая оценка того, можно ли доверять автоподтверждению.
+      responses:
+        '200':
+          description: Сводка за всё время.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+              example:
+                jobs_total: 14
+                items_total: 6120
+                green_correction_rate: 0.031
+                avg_seconds_per_1000: 187.4
+                failed_items_share: 0.004
+                recent_errors:
+                  - { job_id: 2b6a7f0e-9d1c-4c6a-8f55-1e4a2c9d7b33, error: 'Таймаут реранкера', at: '2026-10-20T10:15:00Z' }
+
+  /health:
+    get:
+      tags: [system]
+      summary: Готовность системы
+      responses:
+        '200':
+          description: 'Состояние компонентов. `ready: false` — показать «система готовится».'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example:
+                ready: true
+                components:
+                  database: { ok: true, detail: null }
+                  redis: { ok: true, detail: null }
+                  models: { ok: true, detail: null }
+                  catalog: { ok: true, detail: 'версия 5d2e9b34, 41 280 позиций' }
+
+  /config:
+    get:
+      tags: [system]
+      summary: Публичная конфигурация для интерфейса
+      responses:
+        '200':
+          description: Пороги, лимиты и режим работы.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicConfig' }
+              example:
+                limits: { max_file_mb: 50, max_rows: 5000, max_items_per_job: 1000, classify_max_items: 20 }
+                thresholds: { green: 0.85, yellow: 0.5 }
+                mode: { extractor: hybrid, reranker: cross_encoder, device: cpu, llm_enabled: false }
+
+components:
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ItemId:
+      name: item_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CatalogVersionId:
+      name: version_id
+      in: query
+      description: Версия каталога. Если не передана — последняя версия в статусе `ready`.
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  responses:
+    NotFound:
+      description: Не найдено.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: not_found, message: Задача не найдена., details: { object: job } } }
+    BadRequest:
+      description: Запрос не соответствует схеме.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: invalid_request, message: 'Некорректный запрос: поле items должно содержать от 1 до 20 элементов.', details: { field: items } } }
+    InvalidState:
+      description: Действие невозможно в текущем статусе.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: invalid_state, message: 'Задача уже завершена, отменить её нельзя.', details: { status: done } } }
+    FileTooLarge:
+      description: Файл больше 50 МБ.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: file_too_large, message: 'Файл больше 50 МБ. Разбейте его на части.', details: null } }
+    UnsupportedType:
+      description: Не xlsx, csv или pdf.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: unsupported_file_type, message: 'Поддерживаются файлы xlsx, csv и pdf.', details: null } }
+    Unprocessable:
+      description: Файл нечитаем, неверное сопоставление колонок или превышен лимит.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            mapping:
+              value: { error: { code: mapping_invalid, message: 'Не выбрана колонка с наименованием товара.', details: null } }
+            limit:
+              value: { error: { code: limit_exceeded, message: 'В файле больше 1000 позиций. Разбейте его на части.', details: { max_items_per_job: 1000, found: 1450 } } }
+    NotReady:
+      description: Модели ещё не загружены или каталог пуст.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: not_ready, message: 'Система ещё готовится. Повторите через минуту.', details: null } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_request, not_found, invalid_state, file_too_large, unsupported_file_type,
+                     file_unreadable, mapping_invalid, limit_exceeded, unreviewed_items, not_ready, internal_error]
+            message: { type: string }
+            details:
+              nullable: true
+              type: object
+              additionalProperties: true
+
+    ColumnRole:
+      type: string
+      enum: [name, description, characteristics, quantity, unit, ignore]
+
+    ColumnInfo:
+      type: object
+      required: [index, header, sample, suggested_role]
+      properties:
+        index: { type: integer, minimum: 0 }
+        header: { type: string }
+        sample: { type: array, items: { type: string } }
+        suggested_role: { $ref: '#/components/schemas/ColumnRole' }
+
+    Sheet:
+      type: object
+      required: [name, row_count, header_row, columns, preview]
+      properties:
+        name: { type: string }
+        row_count:
+          type: integer
+          nullable: true
+          description: Число строк данных без заголовка. Для pdf — null.
+        header_row: { type: integer, description: Предполагаемая строка заголовка (с 0). }
+        columns: { type: array, items: { $ref: '#/components/schemas/ColumnInfo' } }
+        preview:
+          type: array
+          description: Первые 10 строк данных.
+          items: { type: array, items: { type: string } }
+
+    LayoutHint:
+      type: object
+      description: Ранее подтверждённое пользователем сопоставление колонок для таких же заголовков.
+      required: [header_row, column_mapping]
+      properties:
+        header_row: { type: integer, minimum: 0 }
+        column_mapping:
+          type: array
+          items:
+            type: object
+            required: [index, role]
+            properties:
+              index: { type: integer, minimum: 0 }
+              role: { $ref: '#/components/schemas/ColumnRole' }
+
+    FileInfo:
+      type: object
+      required: [file_id, filename, size_bytes, sheets]
+      properties:
+        duplicate_of_job_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Задача, в которой уже обрабатывался файл с тем же sha256. Интерфейс предлагает открыть её результат.
+        layout_hint:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/LayoutHint' }
+        file_id: { type: string, format: uuid }
+        filename: { type: string }
+        size_bytes: { type: integer }
+        sheets:
+          type: array
+          description: Для csv — один лист; для pdf — один условный лист «Таблицы».
+          items: { $ref: '#/components/schemas/Sheet' }
+
+    JobCreate:
+      type: object
+      required: [file_id, column_mapping]
+      properties:
+        file_id: { type: string, format: uuid }
+        sheet: { type: string, nullable: true }
+        header_row: { type: integer, minimum: 0, default: 0 }
+        column_mapping:
+          type: array
+          minItems: 1
+          description: |
+            Ровно одна колонка `name`; не больше одной `quantity` и одной `unit`;
+            `description` и `characteristics` — сколько угодно (склеиваются слева направо).
+            Колонки, которых нет в списке, считаются `ignore`. Нарушение — 422 `mapping_invalid`.
+          items:
+            type: object
+            required: [index, role]
+            properties:
+              index: { type: integer, minimum: 0 }
+              role: { $ref: '#/components/schemas/ColumnRole' }
+        options:
+          type: object
+          properties:
+            use_llm: { type: boolean, default: true }
+            use_feedback:
+              type: boolean
+              default: true
+              description: |
+                Использовать ранее подтверждённые пользователями пары «текст → код» (кэш точных совпадений).
+                В оценке качества (`/quality/run`) всегда выключено, чтобы не завышать метрики.
+
+    JobStatus:
+      type: string
+      enum: [queued, parsing, processing, done, done_with_errors, failed, cancelled]
+
+    Job:
+      type: object
+      required: [job_id, status, file_id, filename, total_items, processed_items, failed_items, progress,
+                 effective_mode, catalog_version_id, summary, created_at]
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        file_id: { type: string, format: uuid }
+        filename: { type: string }
+        total_items: { type: integer }
+        processed_items: { type: integer }
+        failed_items: { type: integer }
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: (processed_items + failed_items) / total_items; до окончания разбора файла — 0.
+        eta_seconds: { type: integer, nullable: true }
+        effective_mode:
+          type: string
+          enum: [normal, degraded]
+          description: "`degraded` — LLM недоступна, работают только правила и реранкер без LLM; показать ненавязчивую подсказку."
+        catalog_version_id: { type: string, format: uuid }
+        summary:
+          type: object
+          description: |
+            green / yellow / red — обработанные позиции по уверенности предсказания rank = 1
+            (решения пользователя цвет не меняют). confirmed / corrected — сколько позиций решено вручную;
+            эти счётчики пересекаются с цветовыми.
+          properties:
+            green: { type: integer }
+            yellow: { type: integer }
+            red: { type: integer }
+            confirmed: { type: integer }
+            corrected: { type: integer }
+        error: { type: string, nullable: true, description: 'Текст для пользователя, если статус failed.' }
+        error_code:
+          type: string
+          nullable: true
+          enum: [file_unreadable, mapping_invalid, limit_exceeded, internal_error]
+          description: Машинный код ошибки задачи, например limit_exceeded, если в pdf оказалось больше 1000 позиций.
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+
+    ItemStatus:
+      type: string
+      enum: [pending, processed, needs_review, confirmed, corrected, failed]
+      description: |
+        pending — ещё не обработана; processed — уверенность rank = 1 не ниже порога green;
+        needs_review — ниже порога green; confirmed / corrected — решение пользователя; failed — ошибка обработки.
+
+    ExtractedAttributes:
+      type: object
+      required: [name, characteristics, method]
+      properties:
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        quantity: { type: number, nullable: true }
+        unit: { type: string, nullable: true }
+        characteristics:
+          type: object
+          additionalProperties: { type: string }
+        method: { type: string, enum: [rules, llm, hybrid] }
+        field_confidence:
+          type: object
+          additionalProperties: { type: number }
+
+    CharacteristicMatch:
+      type: object
+      required: [name, status]
+      properties:
+        name: { type: string }
+        expected: { type: string, nullable: true }
+        found: { type: string, nullable: true }
+        status: { type: string, enum: [match, mismatch, missing] }
+        required:
+          type: boolean
+          default: false
+          description: Характеристика обязательна по КТРУ. `missing` у обязательной даёт предупреждение `required_missing`.
+
+    Prediction:
+      type: object
+      required: [rank, ktru_code, okpd2_code, name, confidence]
+      properties:
+        rank: { type: integer, minimum: 1, maximum: 3 }
+        ktru_code: { type: string }
+        okpd2_code: { type: string }
+        name: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        explanation: { type: string, nullable: true }
+        why_not_chosen:
+          type: string
+          nullable: true
+          description: Для rank 2 и 3 — почему этот код хуже первого. Для rank 1 — null.
+        characteristic_matches:
+          type: array
+          items: { $ref: '#/components/schemas/CharacteristicMatch' }
+
+    ItemFlag:
+      type: string
+      enum: [required_missing, archived_code, low_extraction_confidence]
+      description: |
+        required_missing — в позиции нет обязательной характеристики КТРУ предложенного кода;
+        archived_code — код помечен в каталоге как архивный (если выгрузка это содержит);
+        low_extraction_confidence — атрибуты извлечены с низкой уверенностью.
+
+    FinalAnswer:
+      type: object
+      description: Итоговый код по позиции — решение пользователя, если оно есть, иначе предсказание с rank = 1.
+      required: [ktru_code, source]
+      properties:
+        ktru_code: { type: string, nullable: true }
+        name: { type: string, nullable: true }
+        source: { type: string, enum: [prediction, user] }
+        confidence: { type: number, nullable: true, description: Только для source = prediction. }
+
+    Item:
+      type: object
+      required: [item_id, job_id, row_index, raw_text, status, predictions]
+      properties:
+        item_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        row_index: { type: integer }
+        raw_text: { type: string }
+        status: { $ref: '#/components/schemas/ItemStatus' }
+        band:
+          type: string
+          nullable: true
+          enum: [green, yellow, red]
+          description: Считает бэкенд по порогам из /config; для позиций без предсказаний — null.
+        path: { type: string, nullable: true, enum: [fast, rerank] }
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/ItemFlag' }
+        group_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Группа повторов внутри задачи (одинаковые наименование, бренд и модель). null, если в группе одна позиция.
+        group_size: { type: integer, minimum: 1, default: 1 }
+        extracted:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/ExtractedAttributes' }
+        predictions:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/Prediction' }
+        final:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/FinalAnswer' }
+        error: { type: string, nullable: true }
+
+    ItemList:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Item' } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+
+    ClassifyResult:
+      type: object
+      required: [text, predictions]
+      properties:
+        text: { type: string }
+        extracted:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/ExtractedAttributes' }
+        predictions:
+          type: array
+          items: { $ref: '#/components/schemas/Prediction' }
+        path: { type: string, nullable: true, enum: [fast, rerank] }
+        error: { type: string, nullable: true }
+
+    CatalogCharacteristic:
+      type: object
+      required: [name, values]
+      properties:
+        name: { type: string }
+        values: { type: array, items: { type: string } }
+        required: { type: boolean }
+
+    CatalogItem:
+      type: object
+      required: [ktru_code, okpd2_code, name]
+      properties:
+        ktru_code: { type: string }
+        okpd2_code: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        unit: { type: string, nullable: true }
+        characteristics:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogCharacteristic' }
+
+    CatalogVersion:
+      type: object
+      required: [version_id, source, status, items_count, loaded_at]
+      properties:
+        version_id: { type: string, format: uuid }
+        source: { type: string }
+        status: { type: string, enum: [importing, ready, failed] }
+        items_count: { type: integer }
+        note: { type: string, nullable: true }
+        loaded_at: { type: string, format: date-time }
+
+    QualityMetrics:
+      type: object
+      properties:
+        samples: { type: integer }
+        top1_full_code: { type: number }
+        top1_okpd2: { type: number }
+        top3: { type: number }
+        attributes_accuracy: { type: number }
+        ece: { type: number }
+        fast_path_share: { type: number }
+        seconds_per_1000: { type: number, nullable: true }
+
+    QualityRun:
+      type: object
+      required: [run_id, split, status, created_at]
+      properties:
+        run_id: { type: string, format: uuid }
+        split: { type: string, enum: [dev, test] }
+        status: { type: string, enum: [running, done, failed] }
+        config: { type: object, additionalProperties: true }
+        metrics:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/QualityMetrics' }
+        created_at: { type: string, format: date-time }
+
+    ComponentHealth:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        detail: { type: string, nullable: true }
+
+    Health:
+      type: object
+      required: [ready, components]
+      properties:
+        ready: { type: boolean }
+        components:
+          type: object
+          properties:
+            database: { $ref: '#/components/schemas/ComponentHealth' }
+            redis: { $ref: '#/components/schemas/ComponentHealth' }
+            models: { $ref: '#/components/schemas/ComponentHealth' }
+            catalog: { $ref: '#/components/schemas/ComponentHealth' }
+
+    PublicConfig:
+      type: object
+      required: [limits, thresholds, mode]
+      properties:
+        limits:
+          type: object
+          properties:
+            max_file_mb: { type: integer }
+            max_rows: { type: integer, description: Сколько строк разбирается на листе (с запасом на пустые и служебные). }
+            max_items_per_job: { type: integer, description: Сколько позиций после очистки пустых строк допускается в одной задаче. }
+            classify_max_items: { type: integer }
+        thresholds:
+          type: object
+          description: green — уверенность не ниже green; yellow — не ниже yellow; red — ниже yellow.
+          properties:
+            green: { type: number }
+            yellow: { type: number }
+        mode:
+          type: object
+          properties:
+            extractor: { type: string, enum: [rules, llm, hybrid] }
+            reranker: { type: string, enum: [none, cross_encoder, llm] }
+            device: { type: string, enum: [cpu, cuda] }
+            llm_enabled: { type: boolean }
+
+    Stats:
+      type: object
+      required: [jobs_total, items_total, green_correction_rate, avg_seconds_per_1000, failed_items_share, recent_errors]
+      properties:
+        jobs_total: { type: integer }
+        items_total: { type: integer }
+        green_correction_rate: { type: number, nullable: true, description: 'Null, пока нет ни одной зелёной позиции, проверенной вручную. Формула в описании GET /stats.' }
+        avg_seconds_per_1000: { type: number, nullable: true }
+        failed_items_share: { type: number }
+        recent_errors:
+          type: array
+          description: До 10 последних ошибок воркера.
+          items:
+            type: object
+            required: [job_id, error, at]
+            properties:
+              job_id: { type: string, format: uuid }
+              error: { type: string }
+              at: { type: string, format: date-time }
+
+    CatalogRow:
+      type: object
+      description: Одна строка JSONL для `POST /catalog/import`.
+      required: [ktru_code, okpd2_code, name]
+      properties:
+        ktru_code: { type: string, example: 26.20.15.000-00000001 }
+        okpd2_code: { type: string, example: 26.20.15.000 }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        unit: { type: string, nullable: true }
+        status: { type: string, enum: [active, archived], default: active }
+        replaced_by: { type: string, nullable: true }
+        characteristics:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogCharacteristic' }

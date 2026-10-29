@@ -1,0 +1,12 @@
+# Базовый режим (CPU, без скачивания моделей): TF-IDF + правила + сверка характеристик
+pydantic>=2
+numpy
+scikit-learn
+rapidfuzz
+joblib
+httpx          # Jev через OpenRouter (RERANKER=llm)
+pytest
+
+# Опционально: эмбеддер (EMBEDDER_MODEL) и cross-encoder (RERANKER=cross_encoder)
+# torch
+# sentence-transformers

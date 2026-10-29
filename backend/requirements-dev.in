@@ -1,0 +1,10 @@
+# Тесты и проверки: локально и в CI. Версии рантайма берутся из requirements.txt.
+-c requirements.txt
+-r requirements.in
+
+pytest>=8.3,<10
+ruff>=0.8,<1
+pyyaml>=6,<7
+openapi-schema-validator>=0.6,<1
+pip-audit>=2.7,<3
+httpx2>=2.16,<3  # клиент для starlette.testclient: с httpx он выдаёт предупреждение об устаревании

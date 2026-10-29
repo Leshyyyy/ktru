@@ -1,0 +1,26 @@
+# Зависимости образа бэкенда (api, worker-io, worker-ml, beat, migrate).
+# Lock с хешами пересобирается командой из backend/CLAUDE.md, руками requirements.txt не правим.
+
+fastapi>=0.115,<1
+uvicorn>=0.32,<1
+pydantic>=2.9,<3
+pydantic-settings>=2.7,<3
+sqlalchemy>=2.0.36,<2.2
+psycopg[binary]>=3.2,<4
+alembic>=1.14,<2
+pgvector>=0.3,<1
+celery[redis]>=5.4,<6
+
+# Разбор файлов и экспорт (backend/files, Донир) — те же пакеты, что в backend/files/requirements.txt (без pytest).
+python-calamine>=0.9,<1
+openpyxl>=3.1,<4
+pdfplumber>=0.11,<1
+charset-normalizer>=3,<4
+
+# Рантайм ML для PIPELINE=real — те же пакеты, что в ml/requirements.txt (без pytest).
+# Добавили пакет в ml/requirements.txt — добавьте и сюда.
+numpy
+scikit-learn
+rapidfuzz
+joblib
+httpx

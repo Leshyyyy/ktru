@@ -1,0 +1,106 @@
+# CI бэкенда: линтер, тесты (с PostgreSQL + pgvector), аудит зависимостей, сборка и запуск docker compose.
+name: backend
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "contracts/**"
+      - "ml/**"
+      - "tests/**"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - ".env.example"
+      - ".github/workflows/backend.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "backend/**"
+      - "contracts/**"
+      - "ml/**"
+      - "tests/**"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - ".env.example"
+      - ".github/workflows/backend.yml"
+
+# Только чтение репозитория: workflow ничего не публикует и секретов не использует.
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Линтер, тесты, аудит
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg16-trixie@sha256:fce8fb583b92ef8af5150b373a96415d46a8cd38ba09b38efeea17c8b4c7d782
+        env:
+          POSTGRES_USER: ktru_test
+          POSTGRES_PASSWORD: ktru_test
+          POSTGRES_DB: ktru_test
+        ports: ["127.0.0.1:5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U ktru_test -d ktru_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://ktru_test:ktru_test@127.0.0.1:5432/ktru_test
+    steps:
+      # Действия закреплены по SHA коммита: тег можно переписать, коммит — нет.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Зависимости (lock с хешами)
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: --no-deps -r backend/requirements-dev.txt
+      - name: Ruff
+        run: |
+          ruff check backend
+          ruff format --check backend
+      - name: Тесты
+        run: pytest backend/tests
+      - name: Тесты разбора файлов и экспорта (backend/files)
+        run: pytest backend/files/tests
+      - name: End-to-End тесты полного конвейера (tests/e2e)
+        run: pytest tests/e2e
+      - name: Известные уязвимости в зависимостях
+        run: pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r backend/requirements-dev.txt
+
+  compose:
+    name: docker compose up
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Сборка и запуск без .env и ключей — как у проверяющего
+        run: docker compose up -d --build
+      - name: Ждём готовности (/api/v1/health → ready)
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/api/v1/health \
+              | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin)["ready"] else 1)'; then
+              curl -fsS http://127.0.0.1:8000/api/v1/config
+              exit 0
+            fi
+            sleep 5
+          done
+          curl -sS http://127.0.0.1:8000/api/v1/health || true
+          exit 1
+      - name: Логи при ошибке
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
+      - name: Остановка
+        if: always()
+        run: docker compose down -v
