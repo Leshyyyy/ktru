@@ -81,6 +81,13 @@ def load(path: str | Path):
     return FittedCalibrator(d["logreg"], d["isotonic"])
 
 
+def usable_samples(samples: list[dict], active_codes: set[str]) -> tuple[list[dict], int]:
+    """Примеры, чей код — действующая позиция каталога. Разметка, собранная по старому каталогу, может ссылаться на
+    код, ставший архивным: такой ответ система не выдаст, и калибратор учился бы на заведомых ошибках."""
+    kept = [s for s in samples if s["expected_ktru_code"] in active_codes]
+    return kept, len(samples) - len(kept)
+
+
 def main() -> None:
     from contracts.ml_contracts import RawItem  # noqa: PLC0415
 
@@ -110,6 +117,9 @@ def main() -> None:
     samples = [s for s in samples if s["expected_ktru_code"]]
     if skipped:
         print(f"Позиций СТЕ без однозначного кода (в ОКПД2 несколько позиций КТРУ) пропущено: {skipped}")
+    samples, outdated = usable_samples(samples, {e.ktru_code for e in pipe.retriever.items})
+    if outdated:
+        print(f"Позиций с кодом, которого нет среди действующих позиций каталога (старая разметка), пропущено: {outdated}")
     items = [RawItem(item_id=s["id"], text=s["raw_text"]) for s in samples]
     ranked = pipe.rank(items, use_feedback=False)
 

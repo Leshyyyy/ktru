@@ -35,18 +35,47 @@ python -m ml.ste_eval --ste data/ktru/v2/ste.parquet --catalog data/ktru/v2/cata
     --exclude data/ktru/ste/ste_eval_tair.jsonl --out data/ktru/ste/ste_dev.jsonl
 python -m ml.category --ste data/ktru/v2/ste.parquet --catalog data/ktru/v2/catalog_fetched.jsonl \
     --exclude data/ktru/ste/ste_eval_tair.jsonl data/ktru/ste/ste_dev.jsonl --out ml/models/category.joblib
-KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.calibrate \
-    --data data/ktru/v2/eval_samples_v3_dev.jsonl data/ktru/ste/ste_dev.jsonl
-KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.evaluate --data data/ktru/v2/eval_samples_v3_dev.jsonl
-KTRU_CATALOG_PATH=data/ktru/v2/catalog_fetched.jsonl python -m ml.evaluate --data data/ktru/ste/ste_eval_tair.jsonl \
-    [--text-field raw_text_spec]
-# test (eval_samples_v3_test.jsonl) — один раз перед сдачей, ничего под него не подбирать
+export KTRU_CATALOG_PATH=data/ktru/org/ktru_data_org/catalog_org.jsonl   # каталог организаторов (ktru_data_org.zip)
+python -m ml.calibrate --data data/ktru/org/ktru_data_org/eval_samples_v32_dev.jsonl \
+    data/ktru/v2/eval_samples_v3_dev.jsonl data/ktru/ste/ste_dev.jsonl
+python -m ml.evaluate --data data/ktru/org/ktru_data_org/eval_samples_v32_dev.jsonl
+python -m ml.evaluate --data data/ktru/ste/ste_eval_tair.jsonl [--text-field raw_text_spec]
+# test (eval_samples_v32_test_with_obsolete.jsonl) и живые строки ЕИС (data/ktru/real_d/real_samples_fixed.jsonl,
+# --split test) — только для проверки, ничего под них не подбирать
 ```
 
 Ключи — в `ml/.env` (образец `ml/.env.example`, сам файл в `.gitignore`). `RERANKER=llm` включает Jev через OpenRouter,
 ответы кэшируются в `ml/artifacts/llm_cache.jsonl`, повторные прогоны бесплатны.
 
-## Текущие цифры (полный КТРУ: 81 461 позиция, 54 190 для поиска; RERANKER=none, без ключей)
+## Каталог организаторов и разметка v3.2 (30.10)
+
+Каталог — выгрузка ЕИС от организаторов (`catalog_org.jsonl`, 81 504 позиции на 10.10.2026 + изменения до 16.10).
+От снимка Hugging Face отличается мало: +43 кода, 124 позиции стали архивными, у 98 изменились характеристики,
+в ~5 тыс. наименований убраны пробелы и переводы строк; формат тот же. Разметка v3.2 (Егор) собрана по нему и
+заменяет v3. Калибратор переобучен на v3.2 dev + v3 dev (2 строки с ставшими архивными кодами пропущены) + 315
+карточек ste_dev: ECE на отложенных половинах 0,028 / 0,033. Без v3 dev — 0,036 / 0,063: по 20 случайным
+разбиениям средняя 0,052 против 0,044 с v3; смесь изотоники с логистической регрессией хуже (0,052–0,091).
+
+Каталог организаторов, тот же конвейер (старый калибратор → новый):
+
+| Набор | Точный код | любой допустимый | ОКПД2 | ECE |
+| --- | --- | --- | --- | --- |
+| v3.2 dev, 700 | 87,9 → **87,6%** | 94,6 → 94,3% | 97,9 → 97,4% | 0,046 → **0,028** |
+| ste_dev, названия / с характеристиками | — | — | 77,6 / 78,9 → 77,5 / **79,3%** | — |
+| Таир (отложенный), названия / с характеристиками | — | — | 76,0 / 75,4 → 75,7 / **75,9%** | — |
+| Живые строки ЕИС (Донир, 78, test) | 84,6 → **84,6%** | — | 93,6% | 0,102 → 0,089 |
+
+Живые строки ЕИС — `data/ktru/real_d/real_samples_fixed.jsonl`: объекты закупки 4 извещений 44-ФЗ (канцелярия,
+мебель; 62 строки из одного извещения). Исходный файл Донира (154) исправлен `data/ktru/real_d/fix_real.py`:
+21 строка с укрупнёнными кодами, 55 повторов (извещения …812 и …813 — одна закупка), в 150 строках обрезан хвост
+страницы извещения (таблица позиций с кодами КТРУ — в 46 строках там был сам ответ, суммы, документы). Выборка
+мала (1 ошибка — 1,3 п.) и узка; характеристики заказчики заполняют по шаблону КТРУ, поэтому строки «удобнее»
+произвольной спецификации. ECE на ней 0,09: есть уверенные ошибки (калькулятор 0,95, органайзер 0,99).
+
+Порог зелёной зоны с новым калибратором: 0,70 — v3.2 dev 73% зелёных / 99,0% верны, ste_dev (ОКПД2) 28% / 91,1%;
+0,85 — 71% / 99,0% и 27% / 91,6%. Рекомендация 0,70 остаётся, разница с 0,85 стала меньше.
+
+## Цифры на снимке Hugging Face (до 30.10; полный КТРУ: 81 461 позиция, 54 190 для поиска; RERANKER=none, без ключей)
 
 Живые названия — набор Таира (`ste_eval_tair.jsonl`, 1000 карточек СТЕ, 516 кодов ОКПД2, seed 7). Это отложенная
 проверка: веса и калибратор подбирались на `ste_dev.jsonl` (seed 8, 1500 карточек, карточки Таира исключены).
@@ -184,7 +213,8 @@ ste_dev 77,7 / 81,0% против 77,7 / 80,7%, v3 top-1 87,0% против 86,6
   категорий) — в git и в образе. Сырые данные (`data/`) не коммитим из-за размера; в тестах — только
   `contracts/fixtures/` и искусственные строки из `ml/tests/`.
 - `eval_test_candidates` и test-разметку не открывать при разработке; пороги и веса — только по dev
-  (`eval_samples_v3_dev.jsonl`, `ste_dev.jsonl`). Набор Таира `ste_eval_tair.jsonl` — отложенная проверка, под него не подбирать.
+  (`eval_samples_v32_dev.jsonl`, `eval_samples_v3_dev.jsonl`, `ste_dev.jsonl`). Набор Таира `ste_eval_tair.jsonl` и
+  живые строки ЕИС `real_samples_fixed.jsonl` — проверка, под них не подбирать.
 - `ml/` не импортирует FastAPI и Celery.
 - Синтетические метрики оптимистичны: веса и калибратор не подбирать на одной синтетике.
 - Новая логика — с тестом в `ml/tests/`.
