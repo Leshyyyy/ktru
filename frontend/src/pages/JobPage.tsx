@@ -64,7 +64,7 @@ import {
 } from "../components/badges";
 import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
 import { ItemDrawer } from "../components/ItemDrawer";
-import { BAND, dateTime, duration, FLAG, pct, plural } from "../lib/format";
+import { BAND, dateTime, duration, FLAG, pct, pctInt, plural } from "../lib/format";
 
 const PAGE_SIZE = 50;
 /** Ширина карточки позиции (ItemDrawer) — на широком экране страница отступает на неё, таблица не закрыта. */
@@ -754,7 +754,7 @@ function BulkConfirm({ job }: { job: Job }) {
           </Text>
           <NumberInput
             label="Порог уверенности, %"
-            defaultValue={Math.round(min * 100)}
+            defaultValue={pctInt(min)}
             min={50}
             max={100}
             onChange={(v) => {

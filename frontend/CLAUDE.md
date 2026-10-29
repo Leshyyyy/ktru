@@ -30,5 +30,6 @@
 ## Команды
 
 - `npm run dev` — имитация в браузере, `npm run dev:prism` — Prism, `npm run dev:backend` — живой API на :8000.
-- `npm run typecheck` и `npm run build` перед каждым PR; `prettier --write src`.
+- `npm test` — тесты чистых функций из `src/lib` (встроенный `node:test`, файлы в `test/`).
+- `npm test`, `npm run typecheck` и `npm run build` перед каждым PR; `prettier --write src test`.
 - В описании PR — скриншот изменённого экрана.

@@ -38,7 +38,7 @@ import { ApiRequestError } from "../api/client";
 import { useClassify, useConfig, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
 import type { ClassifyResult, ColumnRole, FileInfo, Sheet } from "../api/types";
 import { ConfidenceBadge, KtruCode } from "../components/badges";
-import { fileSize, plural, ROLE } from "../lib/format";
+import { fileSize, pct, plural, ROLE } from "../lib/format";
 import { SAMPLE_HEADERS, SAMPLE_ROWS } from "../mock/sample";
 
 const ACCEPT = {
@@ -475,7 +475,7 @@ function QuickResult({ r }: { r: ClassifyResult }) {
                   Альтернативы:{" "}
                   {r.predictions
                     .slice(1)
-                    .map((p) => `${p.name} (${Math.round(p.confidence * 100)}%)`)
+                    .map((p) => `${p.name} (${pct(p.confidence)})`)
                     .join(", ")}
                 </Text>
               )}
