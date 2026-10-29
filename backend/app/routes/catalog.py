@@ -1,4 +1,5 @@
-"""Тег catalog (чтение): версии каталога, позиция КТРУ с характеристиками и поиск для ручной правки (FR-6.2).
+"""Тег catalog: версии каталога, позиция КТРУ с характеристиками и поиск для ручной правки (FR-6.2), импорт новой
+версии без перезапуска (FR-8.1, порядок шагов — в backend/core/catalog.py).
 
 Без version_id работает последняя версия в статусе ready — та же, что получают новые задачи. При правке позиции
 фронт передаёт catalog_version_id задачи: тогда предлагаются только коды, которые примет PUT /items/{id}/decision.
@@ -6,21 +7,28 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Form, Query, UploadFile
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from backend.core import models
-from backend.core.catalog import latest_ready_version
+from backend.core import models, uploads
+from backend.core.catalog import IMPORT_SOURCE, fail_version, latest_ready_version
+from backend.core.queue import TaskQueue
+from backend.core.settings import Settings
+from contracts.ml_contracts import CatalogRow
 
 from .. import schemas
-from ..deps import get_db
-from ..errors import ApiError, not_found, not_ready
+from ..deps import get_db, get_queue, get_settings
+from ..errors import ApiError, file_too_large, not_found, not_ready
 from ..views import escape_like
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["catalog"])
 
 SessionDep = Annotated[Session, Depends(get_db)]
@@ -77,18 +85,63 @@ def get_catalog_item(ktru_code: str, session: SessionDep, version_id: uuid.UUID 
 @router.get("/catalog/versions", response_model=schemas.CatalogVersionList)
 def list_versions(session: SessionDep) -> schemas.CatalogVersionList:
     versions = session.scalars(select(models.CatalogVersion).order_by(models.CatalogVersion.loaded_at.desc())).all()
-    return schemas.CatalogVersionList(
-        items=[
-            schemas.CatalogVersion(
-                version_id=v.id,
-                source=v.source,
-                status=v.status,
-                items_count=v.items_count,
-                note=v.note,
-                loaded_at=v.loaded_at,
-            )
-            for v in versions
-        ]
+    return schemas.CatalogVersionList(items=[catalog_version(v) for v in versions])
+
+
+@router.post("/catalog/import", status_code=202, response_model=schemas.CatalogVersion)
+def import_catalog(
+    file: UploadFile,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: SessionDep,
+    queue: Annotated[TaskQueue, Depends(get_queue)],
+    note: Annotated[str | None, Form(max_length=500)] = None,
+) -> schemas.CatalogVersion:
+    """Файл сохраняется, строки загружает worker-io, индекс строит worker-ml; статус — в GET /catalog/versions."""
+    _check_first_row(file)
+    version_id = uuid.uuid4()
+    try:
+        stored = uploads.save_upload(
+            file.file, settings.upload_dir, version_id, "jsonl", settings.catalog_import_max_mb * 1024 * 1024
+        )
+    except uploads.UploadTooLarge:
+        raise file_too_large(settings.catalog_import_max_mb) from None
+    version = models.CatalogVersion(
+        id=version_id,
+        source=f"{IMPORT_SOURCE}{uploads.clean_filename(file.filename)}",
+        status="importing",
+        note=note or None,
+    )
+    session.add(version)
+    session.commit()
+    try:
+        queue.import_catalog(str(version_id), stored.storage_path)
+    except Exception:
+        log.exception("Не удалось поставить импорт каталога в очередь", extra={"version_id": str(version_id)})
+        fail_version(session.get_bind(), version_id, "очередь недоступна, загрузите файл заново.")
+        uploads.remove_upload(settings.upload_dir, stored.storage_path)
+    session.refresh(version)
+    log.info("Импорт каталога запущен", extra={"version_id": str(version_id), "size_bytes": stored.size_bytes})
+    return catalog_version(version)
+
+
+def _check_first_row(file: UploadFile) -> None:
+    """Первая непустая строка — CatalogRow: явно чужой файл отклоняется сразу, остальное проверит worker-io."""
+    first = b""
+    for line in file.file:
+        if line.strip():
+            first = line
+            break
+    file.file.seek(0)
+    try:
+        CatalogRow.model_validate(json.loads(first))
+    except (ValueError, ValidationError):
+        message = "Файл не похож на каталог: нужен JSONL, одна позиция КТРУ на строку (формат CatalogRow)."
+        raise ApiError(422, "file_unreadable", message) from None
+
+
+def catalog_version(v: models.CatalogVersion) -> schemas.CatalogVersion:
+    return schemas.CatalogVersion(
+        version_id=v.id, source=v.source, status=v.status, items_count=v.items_count, note=v.note, loaded_at=v.loaded_at
     )
 
 

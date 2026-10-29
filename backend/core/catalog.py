@@ -13,13 +13,16 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -124,13 +127,22 @@ def file_sha256(path: Path) -> str:
 
 def import_catalog_file(session: Session, path: Path, *, source: str, note: str | None = None) -> CatalogVersion:
     """Создаёт версию каталога и загружает строки в транзакции вызывающего: ошибка — откат целиком.
-
-    Повтор кода внутри файла обновляет строку (последняя побеждает), как и повторная загрузка позиции.
+    Версия сразу ready — так migrate загружает стартовый каталог, который worker-ml читает из того же файла.
     """
     version = CatalogVersion(source=source, status="importing", note=note)
     session.add(version)
     session.flush()
+    load_catalog_rows(session, version, path)
+    version.status = "ready"
+    session.flush()
+    return version
 
+
+def load_catalog_rows(session: Session, version: CatalogVersion, path: Path) -> int:
+    """Строки файла → catalog_items версии, items_count. Статус версии не меняется. → число позиций.
+
+    Повтор кода внутри файла обновляет строку (последняя побеждает), как и повторная загрузка позиции.
+    """
     batch: dict[str, dict[str, Any]] = {}
     for row in read_rows(path):
         batch[row.ktru_code] = _values(version.id, row)
@@ -144,9 +156,27 @@ def import_catalog_file(session: Session, path: Path, *, source: str, note: str 
     if not count:
         raise CatalogImportError("В файле нет ни одной позиции каталога.")
     version.items_count = count
-    version.status = "ready"
     session.flush()
-    return version
+    return count
+
+
+def catalog_rows(session: Session, version_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Строки версии в формате CatalogRow (dict) — для Pipeline.load_version в worker-ml (FR-8.1)."""
+    item = CatalogItem
+    rows = session.execute(
+        select(
+            item.ktru_code,
+            item.okpd2_code,
+            item.name,
+            item.description,
+            item.unit,
+            item.status,
+            item.is_enlarged,
+            item.replaced_by,
+            item.characteristics,
+        ).where(item.version_id == version_id)
+    )
+    return [dict(row._mapping) for row in rows]
 
 
 def _values(version_id: uuid.UUID, row: CatalogRow) -> dict[str, Any]:
@@ -172,3 +202,129 @@ def _upsert(session: Session, batch: dict[str, dict[str, Any]]) -> None:
         set_={name: stmt.excluded[name] for name in _UPDATABLE},
     )
     session.execute(stmt)
+
+
+# --- POST /catalog/import (FR-8.1) ------------------------------------------------------------------------------
+#
+# 1. API сохраняет файл и создаёт версию в статусе importing.
+# 2. worker-io (io.import_catalog) загружает строки: items_count > 0, статус по-прежнему importing.
+# 3. worker-ml (CatalogSync) замечает такую версию, в отдельном потоке строит её индекс (Pipeline.load_version:
+#    модели, векторы в pgvector) и ставит ready. Пока строится, задачи обслуживает прежняя версия.
+# Новые задачи закрепляются за последней ready (latest_ready_version) — значит, за версией, которую ML уже знает.
+
+# Источник версии, которую загрузил migrate: её же worker-ml читает из KTRU_CATALOG_PATH при старте.
+MIGRATE_SOURCE = "migrate:"
+IMPORT_SOURCE = "api:"
+STALE_IMPORT = timedelta(hours=2)
+IMPORT_FAILED = "Импорт не выполнен — подробности в логах."
+
+
+def run_catalog_import(engine: Engine, version_id: uuid.UUID, path: Path) -> None:
+    """Задача io.import_catalog. Повторная доставка после успешной загрузки ничего не делает. Файл удаляется."""
+    try:
+        with Session(engine) as session, session.begin():
+            version = session.get(CatalogVersion, version_id, with_for_update=True)
+            if version is None or version.status != "importing" or version.items_count:
+                return
+            count = load_catalog_rows(session, version, path)
+        log.info("Строки каталога загружены, ждём индекс ML", extra={"version_id": str(version_id), "items": count})
+    except CatalogImportError as e:
+        log.warning("Каталог не импортирован: %s", e, extra={"version_id": str(version_id)})
+        fail_version(engine, version_id, str(e))
+    except Exception:
+        log.exception("Каталог не импортирован", extra={"version_id": str(version_id)})
+        fail_version(engine, version_id, IMPORT_FAILED)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def fail_version(engine: Engine, version_id: uuid.UUID, message: str) -> None:
+    """importing → failed; причина дописывается к комментарию версии (в CatalogVersion другого поля для неё нет)."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(CatalogVersion)
+            .where(CatalogVersion.id == version_id, CatalogVersion.status == "importing")
+            .values(status="failed", note=func.concat_ws(" — ", CatalogVersion.note, f"Ошибка: {message}"))
+        )
+
+
+def fail_stale_imports(engine: Engine, stale_after: timedelta = STALE_IMPORT) -> int:
+    """Импорт, застрявший в importing (воркер упал посреди загрузки или индексации) → failed. Для watchdog."""
+    with engine.begin() as conn:
+        stale = conn.scalars(
+            select(CatalogVersion.id).where(
+                CatalogVersion.status == "importing", CatalogVersion.loaded_at < func.now() - stale_after
+            )
+        ).all()
+    for version_id in stale:
+        fail_version(engine, version_id, "импорт прервался, загрузите файл заново.")
+    return len(stale)
+
+
+class CatalogSync:
+    """worker-ml: подхватывает новую версию каталога без перезапуска (FR-8.1). poll() зовётся раз в несколько секунд.
+
+    Загружается только последняя версия: миграционную (MIGRATE_SOURCE) конвейер уже прочитал из файла.
+    Конвейер без load_version (заглушка) индекс не строит — загруженная версия сразу становится ready.
+    """
+
+    def __init__(self, engine: Engine, pipeline: Any):
+        self.engine = engine
+        self.pipeline = pipeline
+        self.loading: str | None = None
+        self._lock = threading.Lock()
+
+    def poll(self) -> None:
+        load_version = getattr(self.pipeline, "load_version", None)
+        with Session(self.engine) as session:
+            loaded_rows = (CatalogVersion.status == "ready") | (
+                (CatalogVersion.status == "importing") & (CatalogVersion.items_count > 0)
+            )
+            newest = session.execute(
+                select(CatalogVersion.id, CatalogVersion.status, CatalogVersion.source)
+                .where(loaded_rows)
+                .order_by(CatalogVersion.loaded_at.desc())
+                .limit(1)
+            ).first()
+        if newest is None or newest.source.startswith(MIGRATE_SOURCE):
+            return
+        if load_version is None:
+            self._mark_ready(newest.id)
+            return
+        version_id = str(newest.id)
+        loaded = getattr(self.pipeline, "loaded_versions", lambda: [])()
+        with self._lock:
+            if version_id in loaded or self.loading is not None:
+                return
+            self.loading = version_id
+        threading.Thread(target=self._load, args=(newest.id,), name="catalog-load", daemon=True).start()
+
+    def _load(self, version_id: uuid.UUID) -> None:
+        started = time.perf_counter()
+        try:
+            with Session(self.engine) as session:
+                rows = catalog_rows(session, version_id)
+            self.pipeline.load_version(str(version_id), rows)
+            self._mark_ready(version_id)
+            log.info(
+                "Версия каталога загружена в ML",
+                extra={
+                    "version_id": str(version_id),
+                    "items": len(rows),
+                    "load_s": round(time.perf_counter() - started),
+                },
+            )
+        except Exception:
+            log.exception("ML не загрузил версию каталога", extra={"version_id": str(version_id)})
+            fail_version(self.engine, version_id, "ML не смог построить индекс версии.")
+        finally:
+            with self._lock:
+                self.loading = None
+
+    def _mark_ready(self, version_id: uuid.UUID) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                update(CatalogVersion)
+                .where(CatalogVersion.id == version_id, CatalogVersion.status == "importing")
+                .values(status="ready")
+            )

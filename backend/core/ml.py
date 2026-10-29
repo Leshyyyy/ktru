@@ -1,6 +1,7 @@
 """Связь с ML: выбор конвейера, режим работы для /config и проверка ответа по контракту ml_contracts.py.
 
-Из ml/ бэкенд берёт только ml.pipeline.get_pipeline() (правило ml/CLAUDE.md).
+Из ml/ бэкенд берёт только ml.pipeline.get_pipeline() (правило ml/CLAUDE.md) и ml.evaluate.evaluate() для
+POST /quality/run.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import math
 import os
 from collections.abc import Container, Mapping, Sequence
 from itertools import pairwise
+from typing import Any
 
 from contracts.ml_contracts import ClassificationResult, Pipeline, RawItem
 
@@ -54,6 +56,15 @@ def load_pipeline(settings: Settings) -> Pipeline:
     from ml.pipeline import get_pipeline
 
     return get_pipeline()
+
+
+def evaluate_quality(samples: list[dict[str, Any]], pipeline: Pipeline, catalog_version_id: str) -> dict[str, Any]:
+    """Метрики раздела 9 на размеченных строках — ml.evaluate.evaluate() на конвейере воркера (подтверждённые
+    примеры он выключает сам). Импорт внутри: ML нужен только worker-ml.
+    """
+    from ml.evaluate import evaluate
+
+    return evaluate(samples, pipeline, catalog_version_id=catalog_version_id)
 
 
 def pipeline_mode(pipeline: object | None, settings: Settings) -> dict[str, object]:

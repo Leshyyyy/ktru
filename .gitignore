@@ -6,6 +6,8 @@ __pycache__/
 data/
 *.jsonl
 !contracts/fixtures/*.jsonl
+# Разметка для оценки качества: тексты команды, не каталог (её загружает migrate в eval_samples).
+!contracts/fixtures/eval/*.jsonl
 
 # Python
 .venv/

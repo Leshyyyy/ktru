@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import time
+import uuid
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.main import create_app
-from backend.core import models
+from backend.core import models, uploads
 from backend.core.settings import Settings
 
 from .conftest import HEADER, ROWS, Stack, xlsx_bytes
@@ -121,3 +125,30 @@ def test_repeated_file_and_known_headers(stack: Stack) -> None:
     with Session(stack.engine) as session, session.begin():
         session.get(models.Job, job["job_id"]).status = "failed"
     assert stack.upload(content)["duplicate_of_job_id"] is None
+
+
+@pytest.mark.db
+def test_cleanup_removes_old_uploads_without_job(stack: Stack) -> None:
+    """io.cleanup_uploads: старые файлы без задачи и обрывки — удаляются; файлы задач и свежие — остаются."""
+    old = stack.upload(xlsx_bytes([HEADER, *ROWS]))["file_id"]
+    fresh = stack.upload(xlsx_bytes([HEADER, *ROWS[:1]]))["file_id"]
+    with_job = stack.upload(xlsx_bytes([HEADER, *ROWS[:2]]))["file_id"]
+    stack.create_job(with_job)
+    with Session(stack.engine) as session, session.begin():
+        session.execute(
+            update(models.SourceFile)
+            .where(models.SourceFile.id.in_([uuid.UUID(old), uuid.UUID(with_job)]))
+            .values(created_at=func.now() - timedelta(days=2))
+        )
+    upload_dir = stack.settings.upload_dir
+    stray, partial = upload_dir / f"{uuid.uuid4()}.xlsx", upload_dir / ".x.part"
+    for path in (stray, partial):
+        path.write_bytes(b"x")
+        os.utime(path, (time.time() - 3 * 86400,) * 2)
+
+    assert uploads.cleanup_uploads(stack.engine, upload_dir, timedelta(hours=24)) == 3
+    with Session(stack.engine) as session:
+        left = set(session.scalars(select(models.SourceFile.id)).all())
+    assert left == {uuid.UUID(fresh), uuid.UUID(with_job)}
+    assert sorted(p.name.split(".")[0] for p in stack.stored_files()) == sorted([fresh, with_job])
+    assert uploads.cleanup_uploads(stack.engine, upload_dir, timedelta(hours=24)) == 0
