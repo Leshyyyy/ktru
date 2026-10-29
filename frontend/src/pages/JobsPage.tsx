@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Box,
   Button,
   Card,
   Center,
@@ -53,7 +54,7 @@ export function JobsPage() {
               <Table.Tr>
                 <Table.Th>Файл</Table.Th>
                 <Table.Th w={170}>Статус</Table.Th>
-                <Table.Th w={220}>Прогресс</Table.Th>
+                <Table.Th w={320}>Прогресс</Table.Th>
                 <Table.Th w={150}>Создана</Table.Th>
                 <Table.Th w={170} />
                 <Table.Th w={50} />
@@ -125,6 +126,13 @@ export function JobsPage() {
 
 function JobProgress({ job }: { job: Job }) {
   const done = job.processed_items + job.failed_items;
+  const s = job.summary;
+  // Полные слова вместо «12 зел. / 33 жёлт.»: цвет точки дублирует подпись, а не заменяет её.
+  const zones = [
+    { n: s.green ?? 0, color: "var(--k-hi)", word: ["зелёная", "зелёные", "зелёных"] as const },
+    { n: s.yellow ?? 0, color: "var(--k-mid)", word: ["жёлтая", "жёлтые", "жёлтых"] as const },
+    { n: s.red ?? 0, color: "var(--k-lo)", word: ["красная", "красные", "красных"] as const },
+  ];
   return (
     <Stack gap={4}>
       <Progress
@@ -134,10 +142,20 @@ function JobProgress({ job }: { job: Job }) {
         color={job.status === "cancelled" ? "gray" : job.failed_items ? "orange" : undefined}
       />
       <Text size="xs" c="dimmed" className="tabular">
-        {job.total_items ? `${done} из ${job.total_items}` : "—"}
-        {(job.summary.green ?? 0) + (job.summary.yellow ?? 0) + (job.summary.red ?? 0) > 0 &&
-          ` · ${job.summary.green ?? 0} зел. / ${job.summary.yellow ?? 0} жёлт. / ${job.summary.red ?? 0} красн.`}
+        {job.total_items ? `${done} из ${job.total_items}` : "позиции считаются"}
       </Text>
+      {zones.some((z) => z.n > 0) && (
+        <Group gap={8} wrap="wrap">
+          {zones.map((z) => (
+            <Group key={z.word[2]} gap={4} wrap="nowrap">
+              <Box w={8} h={8} style={{ borderRadius: 2, background: z.color, flex: "none" }} aria-hidden />
+              <Text size="xs" c="dimmed" className="tabular">
+                {z.n} {plural(z.n, z.word[0], z.word[1], z.word[2])}
+              </Text>
+            </Group>
+          ))}
+        </Group>
+      )}
     </Stack>
   );
 }

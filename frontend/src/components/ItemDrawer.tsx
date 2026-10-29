@@ -21,6 +21,7 @@ import {
   Text,
   Textarea,
   TextInput,
+  Tooltip,
   UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
@@ -31,6 +32,7 @@ import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
 import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode, useThresholds } from "./badges";
 import { useDecisions, useWithOverlay } from "./DecisionQueue";
 import classes from "./ItemDrawer.module.css";
+import { pct } from "../lib/format";
 
 type Props = {
   itemId: string | null;
@@ -291,18 +293,28 @@ function Attributes({ item }: { item: Item }) {
   const x = item.extracted!;
   const conf = Object.values(x.field_confidence ?? {}).filter((v) => v > 0);
   const avg = conf.length ? conf.reduce((a, b) => a + b, 0) / conf.length : null;
-  const level = avg == null ? null : avg >= 0.8 ? "высокая" : avg >= 0.6 ? "средняя" : "низкая";
-  const method = x.method === "rules" ? "правила" : x.method === "llm" ? "LLM" : "правила + LLM";
+  // Вместо «правила · уверенность средняя» — вывод для человека; способ и число — во всплывающей подсказке.
+  const verdict =
+    avg == null
+      ? null
+      : avg >= 0.8
+        ? "распознаны уверенно"
+        : avg >= 0.6
+          ? "проверьте атрибуты"
+          : "распознаны неуверенно";
+  const method =
+    x.method === "rules" ? "по правилам" : x.method === "llm" ? "языковой моделью" : "правилами и языковой моделью";
   const chars = Object.entries(x.characteristics ?? {});
   const brandModel = [x.brand, x.model].filter(Boolean).join(" · ");
   return (
     <div>
       <div className={classes.sectT}>
         <span>Извлечённые атрибуты</span>
-        <span>
-          {method}
-          {level && ` · уверенность ${level}`}
-        </span>
+        {verdict && (
+          <Tooltip label={`Распознаны ${method}, средняя уверенность ${pct(avg)}.`}>
+            <span>{verdict}</span>
+          </Tooltip>
+        )}
       </div>
       <dl className={classes.kv}>
         <dt>Наименование</dt>

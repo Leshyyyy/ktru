@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Box,
   Button,
   Card,
   Collapse,
@@ -330,55 +331,58 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
         </ScrollArea>
       </Card>
 
-      <Card>
-        <Stack gap="sm">
-          {error ? (
-            <Alert color="orange" icon={<IconAlertCircle />} variant="light">
-              {error}
-            </Alert>
-          ) : null}
-          <Group justify="space-between" wrap="wrap" gap="md">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="compact-sm"
-              onClick={toggleAdvanced}
-              rightSection={
-                <IconChevronDown size={14} style={{ transform: advanced ? "rotate(180deg)" : undefined }} />
-              }
-            >
-              Дополнительно
-            </Button>
-            <Button
-              size="md"
-              leftSection={<IconPlayerPlay size={18} />}
-              onClick={start}
-              disabled={!!error || tooMany || notReady}
-              loading={createJob.isPending}
-            >
-              Начать обработку
-            </Button>
-          </Group>
-          <Collapse in={advanced}>
-            <Stack gap="sm" pt="xs">
-              <Switch
-                checked={useFeedback}
-                onChange={(e) => setUseFeedback(e.currentTarget.checked)}
-                label="Использовать ранее подтверждённые ответы"
-                description="Если такая же позиция уже была проверена человеком, код возьмётся из неё."
-              />
-              {config?.mode.llm_enabled && (
+      {/* Панель запуска прилипает к низу экрана: на 900 px таблица колонок выше окна, а кнопка — главное действие шага. */}
+      <Box className="k-sticky-actions">
+        <Card>
+          <Stack gap="sm">
+            {error ? (
+              <Alert color="orange" icon={<IconAlertCircle />} variant="light">
+                {error}
+              </Alert>
+            ) : null}
+            <Group justify="space-between" wrap="wrap" gap="md">
+              <Button
+                variant="subtle"
+                color="gray"
+                size="sm"
+                onClick={toggleAdvanced}
+                rightSection={
+                  <IconChevronDown size={14} style={{ transform: advanced ? "rotate(180deg)" : undefined }} />
+                }
+              >
+                Дополнительно
+              </Button>
+              <Button
+                size="md"
+                leftSection={<IconPlayerPlay size={18} />}
+                onClick={start}
+                disabled={!!error || tooMany || notReady}
+                loading={createJob.isPending}
+              >
+                Начать обработку
+              </Button>
+            </Group>
+            <Collapse in={advanced}>
+              <Stack gap="sm" pt="xs">
                 <Switch
-                  checked={useLlm}
-                  onChange={(e) => setUseLlm(e.currentTarget.checked)}
-                  label="Подключать языковую модель для сложных позиций"
-                  description="Точнее на «грязных» описаниях, но обработка идёт дольше."
+                  checked={useFeedback}
+                  onChange={(e) => setUseFeedback(e.currentTarget.checked)}
+                  label="Использовать ранее подтверждённые ответы"
+                  description="Если такая же позиция уже была проверена человеком, код возьмётся из неё."
                 />
-              )}
-            </Stack>
-          </Collapse>
-        </Stack>
-      </Card>
+                {config?.mode.llm_enabled && (
+                  <Switch
+                    checked={useLlm}
+                    onChange={(e) => setUseLlm(e.currentTarget.checked)}
+                    label="Подключать языковую модель для сложных позиций"
+                    description="Точнее на «грязных» описаниях, но обработка идёт дольше."
+                  />
+                )}
+              </Stack>
+            </Collapse>
+          </Stack>
+        </Card>
+      </Box>
     </Stack>
   );
 }

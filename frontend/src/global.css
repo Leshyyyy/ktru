@@ -170,3 +170,12 @@ body {
   border: 1px solid var(--k-mode-line);
   color: var(--k-mode-ink);
 }
+
+/* Панель с главным действием шага, прилипшая к низу экрана; полоса фона под ней закрывает прокручиваемое. */
+.k-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding-bottom: 16px;
+  background: var(--mantine-color-body);
+}

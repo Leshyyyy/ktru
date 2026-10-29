@@ -113,3 +113,32 @@
   color: var(--k-mode-ink);
   padding: 8px 16px;
 }
+
+/* Пилюля «О системе» — кнопка: зона нажатия не ниже 32 px, отклик на наведение и нажатие. */
+.pillBtn {
+  min-height: 32px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--k-line-strong);
+    color: var(--k-ink);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
+.about {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+
+  & dt {
+    color: var(--k-muted);
+  }
+  & dd {
+    margin: 0;
+  }
+}
