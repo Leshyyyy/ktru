@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     classify_max_items: int = Field(20, gt=0)
     # Сколько POST /classify ждёт ответа worker-ml (он может досчитывать пачку большой задачи), секунд.
     classify_timeout_s: float = Field(30, gt=0)
-    green_threshold: float = 0.85
+    green_threshold: float = 0.70  # замер ML (#21); в примере контракта 0.85
     yellow_threshold: float = 0.50
 
     # Через запятую. Нужен только для фронта на отдельном адресе: через nginx фронт и API на одном адресе.

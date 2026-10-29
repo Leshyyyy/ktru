@@ -270,8 +270,9 @@ services:
     volumes:
       - models:/data/models
       - catalog:/data/catalog:ro
-    # Полный каталог, модель категорий, torch и e5-small — около 2 ГБ; запас на пачку позиций.
-    mem_limit: 3g
+    # Одна версия каталога с моделью категорий, torch и e5-small — 2,8 ГБ (замер Jove). При импорте (FR-8.1)
+    # в памяти две версии (CatalogVersions.KEEP = 2), отсюда 5 ГБ.
+    mem_limit: 5g
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"ml@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
