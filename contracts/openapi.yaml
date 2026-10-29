@@ -1167,6 +1167,7 @@ components:
         description: { type: string, nullable: true }
         unit: { type: string, nullable: true }
         status: { type: string, enum: [active, archived], default: active }
+        is_enlarged: { type: boolean, default: false, description: 'Укрупнённая позиция (is_template в выгрузке ЕИС): обобщает группу кодов, ответом и в поиске не выдаётся.' }
         replaced_by: { type: string, nullable: true }
         characteristics:
           type: array

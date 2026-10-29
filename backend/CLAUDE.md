@@ -23,7 +23,7 @@
 | `tasks/celery_app.py` | Celery: `create_celery(settings)`, очереди `io`/`ml`, JSON, `acks_late`, лимиты, beat |
 | `tasks/jobs.py`, `tasks/watchdog.py` | задачи io: `io.parse_file`, `io.watchdog`; логика — в `core/processing.py` |
 | `tasks/ml_worker.py` | вход worker-ml: загрузка конвейера, готовность, `ml.process_chunk` с ретраями 5/20/60 с |
-| `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`) |
+| `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`), дальше — ревизии с ALTER (`0002`: `is_enlarged`, `alt_valid_codes`) |
 | `migrate.py` | контейнер migrate: миграции → роль приложения → каталог (в режиме real скачивает его на том `catalog`, не вышло — заглушка) |
 | `Dockerfile` | два образа: по умолчанию `ktru-backend` (api, worker-io, beat, migrate), `--target ml` — `ktru-backend-ml` для worker-ml (torch CPU, `requirements-ml.txt`, модель e5-small из `fetch_embedder.py`) |
 

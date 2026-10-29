@@ -31,7 +31,17 @@ log = logging.getLogger(__name__)
 
 BATCH_SIZE = 500
 DOWNLOAD_TIMEOUT_S = 900
-_UPDATABLE = ("okpd2_code", "name", "description", "unit", "status", "replaced_by", "characteristics", "search_text")
+_UPDATABLE = (
+    "okpd2_code",
+    "name",
+    "description",
+    "unit",
+    "status",
+    "is_enlarged",
+    "replaced_by",
+    "characteristics",
+    "search_text",
+)
 
 
 class CatalogImportError(Exception):
@@ -148,6 +158,7 @@ def _values(version_id: uuid.UUID, row: CatalogRow) -> dict[str, Any]:
         "description": row.description,
         "unit": row.unit,
         "status": row.status,
+        "is_enlarged": row.is_enlarged,
         "replaced_by": row.replaced_by,
         "characteristics": row.characteristics,
         "search_text": build_search_text(row),
