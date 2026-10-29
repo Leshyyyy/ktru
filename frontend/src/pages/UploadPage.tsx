@@ -475,7 +475,7 @@ function QuickResult({ r }: { r: ClassifyResult }) {
                   Альтернативы:{" "}
                   {r.predictions
                     .slice(1)
-                    .map((p) => `${p.name} (${pct(p.confidence)})`)
+                    .map((p) => `${p.ktru_code} ${p.name} (${pct(p.confidence)})`)
                     .join(", ")}
                 </Text>
               )}
