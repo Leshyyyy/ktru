@@ -78,4 +78,30 @@ curl -s "$API/jobs/$JOB/export?format=json" | jq '.[0]'
 curl -s "$API/jobs/$JOB/export?allow_unreviewed=false" | jq .error   # 409 unreviewed_items, если такие остались
 ```
 
+**8. Быстрая проверка** — до 20 строк сразу, без задачи и без сохранения (экран загрузки).
+
+```bash
+curl -s -X POST $API/classify -H 'Content-Type: application/json' \
+  -d '{"items": [{"text": "Бумага офисная А4, 80 г/м2, 500 листов"}, {"text": "Картридж HP 85A"}]}' \
+  | jq '.results[] | {text, code: .predictions[0].ktru_code, confidence: .predictions[0].confidence}'
+```
+
+**9. Качество и статистика.** Оценку на наборе `dev` или `test` считает worker-ml; разметка — в
+`contracts/fixtures/eval/*.jsonl` (её загружает migrate).
+
+```bash
+curl -s -X POST $API/quality/run -H 'Content-Type: application/json' -d '{"split": "dev"}' | jq '{run_id, status}'
+curl -s $API/quality/latest | jq '.dev | {status, metrics}'   # status: running → done
+curl -s $API/stats | jq
+```
+
+**10. Новая версия каталога** без перезапуска: JSONL, одна позиция `CatalogRow` на строку. worker-io загружает строки,
+worker-ml строит индекс; версия становится `ready`, и новые задачи работают с ней. Большой файл — напрямую в API
+(через nginx на порту интерфейса проходит не больше 60 МБ).
+
+```bash
+curl -s -X POST $API/catalog/import -F file=@catalog.jsonl -F 'note=КТРУ на 29.10' | jq '{version_id, status}'
+curl -s $API/catalog/versions | jq '.items[] | {version_id, status, items_count, note}'
+```
+
 Ошибки всегда в одном формате `{"error": {"code", "message", "details"}}`, `message` — по-русски для человека.

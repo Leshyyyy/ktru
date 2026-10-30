@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from celery.exceptions import TimeoutError as CeleryTimeoutError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from backend.core import models, processing, uploads
-from backend.core.queue import CeleryQueue
+from backend.core.queue import CeleryQueue, ClassifyTimeout
 from backend.core.settings import Settings
 from backend.files import FileUnreadableError, MappingInvalidError
 from backend.tasks import ml_worker
@@ -96,9 +97,24 @@ def test_upload_extensions_setting() -> None:
 class _RecordingCelery:
     def __init__(self) -> None:
         self.sent: list[tuple[str, list[Any], dict[str, Any]]] = []
+        self.result: Any = None
 
-    def send_task(self, name: str, args: list[Any], **options: Any) -> None:
+    def send_task(self, name: str, args: list[Any], **options: Any) -> Any:
         self.sent.append((name, args, options))
+        return self.result
+
+
+class _Result:
+    def __init__(self, value: Any = None, error: Exception | None = None) -> None:
+        self.value, self.error, self.forgotten = value, error, False
+
+    def get(self, timeout: float) -> Any:
+        if self.error:
+            raise self.error
+        return self.value
+
+    def forget(self) -> None:
+        self.forgotten = True
 
 
 def test_celery_queue_sends_tasks_by_name() -> None:
@@ -111,6 +127,20 @@ def test_celery_queue_sends_tasks_by_name() -> None:
         ("ml.process_chunk", ["j", ["a", "b"]]),
     ]
     assert all(options["retry_policy"]["max_retries"] == 2 for _, _, options in celery.sent)
+
+
+def test_celery_queue_classify_waits_for_result() -> None:
+    celery = _RecordingCelery()
+    celery.result = _Result([{"text": "x"}])
+    queue = CeleryQueue(celery)  # type: ignore[arg-type]
+    assert queue.classify(["x"], "v", timeout_s=5) == [{"text": "x"}]
+    [(name, args, options)] = celery.sent
+    assert (name, args, options["queue"], options["expires"]) == ("ml.classify", [["x"], "v"], "classify", 5)
+    assert celery.result.forgotten  # результат не копится в Redis
+
+    celery.result = _Result(error=CeleryTimeoutError())
+    with pytest.raises(ClassifyTimeout):
+        queue.classify(["x"], "v", timeout_s=5)
 
 
 def test_process_chunk_task_retries_then_fails_items(monkeypatch: pytest.MonkeyPatch) -> None:

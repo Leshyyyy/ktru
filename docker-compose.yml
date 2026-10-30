@@ -151,6 +151,8 @@ services:
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
       CLASSIFY_MAX_ITEMS:
+      CLASSIFY_TIMEOUT_S:
+      CATALOG_IMPORT_MAX_MB:
       GREEN_THRESHOLD:
       YELLOW_THRESHOLD:
       EXTRACTOR:
@@ -195,8 +197,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
+      UPLOAD_TTL_HOURS:
     volumes:
-      - uploads:/data/uploads:ro
+      # Запись — для уборки файлов без задачи (io.cleanup_uploads).
+      - uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"io@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
@@ -224,8 +228,9 @@ services:
       - -A
       - backend.tasks.ml_worker
       - worker
+      # classify — синхронный POST /classify: отдельная очередь, чтобы не ждать за всеми пачками большой задачи.
       - -Q
-      - ml
+      - classify,ml
       - -n
       - ml@%h
       - --concurrency
@@ -265,8 +270,9 @@ services:
     volumes:
       - models:/data/models
       - catalog:/data/catalog:ro
-    # Полный каталог, модель категорий, torch и e5-small — около 2 ГБ; запас на пачку позиций.
-    mem_limit: 3g
+    # Одна версия каталога с моделью категорий, torch и e5-small — 2,8 ГБ (замер Jove). При импорте (FR-8.1)
+    # в памяти две версии (CatalogVersions.KEEP = 2), отсюда 5 ГБ.
+    mem_limit: 5g
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"ml@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
