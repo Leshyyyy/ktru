@@ -86,7 +86,10 @@ def make_embedder(settings: Settings):
         from .embed import SentenceTransformerEmbedder  # noqa: PLC0415
 
         return SentenceTransformerEmbedder(settings.embedder_model, settings.device)
-    except Exception:  # noqa: BLE001 — нет torch, модель не скачалась (нет доступа к Hugging Face), нет памяти
+    except ImportError as e:  # образ без torch: ожидаемо, без стека в логе
+        log.warning("Эмбеддер %s выключен: %s — поиск без эмбеддингов (TF-IDF)", settings.embedder_model, e)
+        return None
+    except Exception:  # noqa: BLE001 — модель не скачалась (нет доступа к Hugging Face), нет памяти
         log.exception("Эмбеддер %s не загрузился — поиск без эмбеддингов (TF-IDF), классификация работает",
                       settings.embedder_model)
         return None

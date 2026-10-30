@@ -56,3 +56,13 @@ def test_characteristics_from_column_with_commas_in_values():
                    columns={"name": "Трактор с грейдером НОРД", "characteristics": chars})
     assert RulesExtractor().extract_one(item).characteristics == {
         "Вид игрушки": "Трактор с грейдером", "Габаритные размеры": "35,5х16х16 см", "Вид материала": "Пластик, резина"}
+
+
+def test_long_characteristic_names_are_not_cut():
+    from contracts.ml_contracts import RawItem
+    from ml.extract import RulesExtractor
+
+    chars = "Виды одежды (включая форменную), головных уборов, одежды специальной: Одежда для взрослых; Цвет: Черный"
+    item = RawItem(item_id="1", text="Толстовка " + chars, columns={"name": "Толстовка", "characteristics": chars})
+    got = RulesExtractor().extract_one(item).characteristics
+    assert got["Виды одежды (включая форменную), головных уборов, одежды специальной"] == "Одежда для взрослых"
