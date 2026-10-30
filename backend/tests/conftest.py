@@ -187,7 +187,7 @@ def _admin_exec(admin_url: URL, statement: str) -> None:
 
 
 @pytest.fixture
-def db_settings(admin_url: URL) -> Iterator[Settings]:
+def db_settings(admin_url: URL, tmp_path: Path) -> Iterator[Settings]:
     """Пустая база и своя роль приложения на каждый тест; после теста удаляются."""
     suffix = uuid.uuid4().hex[:10]
     database, role = f"ktru_test_{suffix}", f"ktru_app_{suffix}"
@@ -201,6 +201,9 @@ def db_settings(admin_url: URL) -> Iterator[Settings]:
             postgres_password=admin_url.password,
             app_db_user=role,
             app_db_password="app-secret",
+            # Разметку из contracts/fixtures/eval тесты не видят: test_quality_api рассчитан на пустой набор.
+            # Папка «no-eval», а не «eval»: тесты сами пишут разметку в tmp_path / "eval", а tmp_path в тесте общий.
+            eval_samples_dir=tmp_path / "no-eval",
         )
     finally:
         _admin_exec(admin_url, f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
