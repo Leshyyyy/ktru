@@ -1,5 +1,7 @@
 """Пакет backend.files — разбор спецификаций и экспорт результатов."""
 
+from backend.files.hash import compute_file_sha256, compute_headers_hash
+from backend.files.roles import suggest_roles
 from backend.files.reader import read_file
 from backend.files.parser import parse_rows
 from backend.files.export import (
@@ -36,6 +38,9 @@ from backend.files.exceptions import (
 __all__ = [
     "read_file",
     "parse_rows",
+    "suggest_roles",
+    "compute_file_sha256",
+    "compute_headers_hash",
     "export_job_results",
     "export_xlsx",
     "export_csv",
@@ -61,3 +66,4 @@ __all__ = [
     "UnreviewedItemsError",
     "InvalidStateError",
 ]
+
