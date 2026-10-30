@@ -278,6 +278,60 @@ const err = (status: number, code: string, message: string, details: Record<stri
 
 const notFound = (object: string, message = "Не найдено.") => err(404, "not_found", message, { object });
 
+// ---------------------------------------------------------------- оценка качества (демо-цифры)
+
+const EVAL_MS = 4000; // «прогон» в имитации длится 4 с, чтобы было видно состояние «идёт оценка»
+const EVAL_DEMO: Record<"dev" | "test", { samples: number; metrics: Record<string, number> }> = {
+  dev: {
+    samples: 210,
+    metrics: {
+      top1_full_code: 0.88,
+      top1_any_valid: 0.9,
+      top1_okpd2: 0.94,
+      top3: 0.96,
+      attributes_accuracy: 0.92,
+      ece: 0.041,
+      fast_path_share: 0.81,
+    },
+  },
+  test: {
+    samples: 90,
+    metrics: {
+      top1_full_code: 0.86,
+      top1_any_valid: 0.88,
+      top1_okpd2: 0.93,
+      top3: 0.95,
+      attributes_accuracy: 0.91,
+      ece: 0.048,
+      fast_path_share: 0.79,
+    },
+  },
+};
+type EvalRec = { run_id: string; split: "dev" | "test"; started: number };
+const evalRuns: Partial<Record<"dev" | "test", EvalRec>> = {
+  dev: { run_id: uuid(), split: "dev", started: Date.now() - 5 * 3600_000 },
+  test: { run_id: uuid(), split: "test", started: Date.now() - 5 * 3600_000 },
+};
+const evalView = (r: EvalRec) => {
+  const done = Date.now() - r.started >= EVAL_MS;
+  const demo = EVAL_DEMO[r.split];
+  return {
+    run_id: r.run_id,
+    split: r.split,
+    status: done ? "done" : "running",
+    created_at: iso(r.started),
+    config: { extractor: "hybrid", reranker: "cross_encoder", device: "cpu", demo: true },
+    metrics: done
+      ? {
+          samples: demo.samples,
+          seconds_per_1000: 187.4,
+          ...demo.metrics,
+          attributes_by_field: { name: 0.95, brand: 0.93, model: 0.88 },
+        }
+      : null,
+  };
+};
+
 const routes: [string, string, Handler][] = [
   [
     "GET",
@@ -677,37 +731,24 @@ const routes: [string, string, Handler][] = [
   ],
 
   [
-    "GET",
-    "/quality/latest",
-    () => {
-      const run = (split: "dev" | "test", m: Record<string, number>) => ({
-        run_id: uuid(),
-        split,
-        status: "done",
-        created_at: iso(Date.now() - 5 * 3600_000),
-        config: { extractor: "hybrid", reranker: "cross_encoder", device: "cpu", demo: true },
-        metrics: { samples: split === "dev" ? 210 : 90, seconds_per_1000: 187.4, ...m },
-      });
-      return json({
-        dev: run("dev", {
-          top1_full_code: 0.88,
-          top1_okpd2: 0.94,
-          top3: 0.96,
-          attributes_accuracy: 0.92,
-          ece: 0.041,
-          fast_path_share: 0.81,
-        }),
-        test: run("test", {
-          top1_full_code: 0.86,
-          top1_okpd2: 0.93,
-          top3: 0.95,
-          attributes_accuracy: 0.91,
-          ece: 0.048,
-          fast_path_share: 0.79,
-        }),
-      });
+    "POST",
+    "/quality/run",
+    async ({ req }) => {
+      const body = await req.json().catch(() => null);
+      const split: unknown = body?.split;
+      if (split !== "dev" && split !== "test")
+        return err(400, "invalid_request", "Некорректный запрос: поле split должно быть dev или test.", {
+          field: "split",
+        });
+      // Как бэкенд: прогон этого набора уже идёт — возвращается он, второй не запускается.
+      const current = evalRuns[split];
+      if (current && evalView(current).status === "running") return json(evalView(current), 202);
+      evalRuns[split] = { run_id: uuid(), split, started: Date.now() };
+      return json(evalView(evalRuns[split]!), 202);
     },
   ],
+
+  ["GET", "/quality/latest", () => json({ dev: evalView(evalRuns.dev!), test: evalView(evalRuns.test!) })],
 
   [
     "GET",

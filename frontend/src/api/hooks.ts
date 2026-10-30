@@ -268,8 +268,25 @@ export function useClassify() {
   });
 }
 
+export type EvalSplit = "dev" | "test";
+
 export function useQuality() {
-  return useQuery({ queryKey: keys.quality, queryFn: () => unwrap(api.GET("/quality/latest")) });
+  return useQuery({
+    queryKey: keys.quality,
+    queryFn: () => unwrap(api.GET("/quality/latest")),
+    // Пока идёт прогон — опрашиваем раз в 3 с: оценка 700 позиций занимает 1–2 минуты.
+    refetchInterval: (q) =>
+      q.state.data?.dev?.status === "running" || q.state.data?.test?.status === "running" ? 3000 : false,
+  });
+}
+
+/** Запуск оценки на размеченном наборе. Если прогон этого набора уже идёт, бэкенд вернёт его, второй не начнётся. */
+export function useRunQuality() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (split: EvalSplit) => unwrap(api.POST("/quality/run", { body: { split } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.quality }),
+  });
 }
 
 export function useStats() {
