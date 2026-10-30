@@ -175,7 +175,7 @@ def test_parse_rows_long_text_preserved(tmp_path: Path):
 
     items = parse_rows(csv_file, header_row=0, column_mapping=mapping)
     assert len(items) == 1
-    assert items[0].raw_text.startswith("Серверный шкаф 42U Характеристика")
+    assert items[0].raw_text.startswith("Серверный шкаф 42U; Характеристика")  # колонки склеиваются через «; »
     assert len(items[0].raw_text) > 2000
     assert items[0].raw_row[1] == long_desc.strip()
 
