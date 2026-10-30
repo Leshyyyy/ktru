@@ -1,3 +1,4 @@
+/* Hallmark · checked: 2026-10-29 · genre: modern-minimal (inferred) · record and waivers: src/global.css · v2.0.0 */
 /* Компоненты из макета «Экраны.html», экран 10 «Компоненты». */
 
 .conf {
@@ -25,17 +26,21 @@
     inset: 0 auto 0 0;
     width: calc(var(--v) * 1%);
     border-radius: 3px;
-    background: currentColor;
+    background: var(--bar);
   }
 
+  /* Число — тёмным оттенком зоны (контраст ≥ 4.5:1), полоска — цветом зоны. */
   &[data-band="green"] {
-    color: var(--k-hi);
+    color: var(--k-hi-ink);
+    --bar: var(--k-hi);
   }
   &[data-band="yellow"] {
-    color: var(--k-mid);
+    color: var(--k-mid-ink);
+    --bar: var(--k-mid);
   }
   &[data-band="red"] {
-    color: var(--k-lo);
+    color: var(--k-lo-ink);
+    --bar: var(--k-lo);
   }
   &[data-size="lg"] {
     font-size: 15px;
@@ -48,22 +53,28 @@
 .st {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   border-radius: 7px;
-  padding: 3px 9px;
+  padding: 2px 8px;
   font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
-  background: #eef1ef;
+  background: var(--k-neutral-bg);
   color: var(--k-muted);
 
-  &[data-status="processed"] {
+  &[data-status="processed"],
+  &[data-tone="ok"] {
     background: var(--k-hi-bg);
-    color: var(--k-hi);
+    color: var(--k-hi-ink);
   }
-  &[data-status="needs_review"] {
+  &[data-status="needs_review"],
+  &[data-tone="warn"] {
     background: var(--k-mid-bg);
-    color: var(--k-mid);
+    color: var(--k-mid-ink);
+  }
+  &[data-tone="busy"] {
+    background: var(--k-cor-bg);
+    color: var(--k-cor);
   }
   &[data-status="confirmed"] {
     background: var(--k-ok-bg);
@@ -73,9 +84,10 @@
     background: var(--k-cor-bg);
     color: var(--k-cor);
   }
-  &[data-status="failed"] {
+  &[data-status="failed"],
+  &[data-tone="bad"] {
     background: var(--k-lo-bg);
-    color: var(--k-lo);
+    color: var(--k-lo-ink);
   }
 }
 
@@ -88,7 +100,7 @@
   color: var(--k-flag);
   background: var(--k-flag-bg);
   border-radius: 5px;
-  padding: 1px 6px;
+  padding: 1px 8px;
   white-space: nowrap;
 }
 
@@ -101,9 +113,16 @@
   background: var(--k-primary-soft);
   border: 0;
   border-radius: 5px;
-  padding: 1px 6px;
+  padding: 1px 8px;
   cursor: pointer;
   white-space: nowrap;
+
+  &:hover {
+    background: var(--k-hi-bg);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
 }
 
 .code {

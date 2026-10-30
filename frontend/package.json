@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "gen:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts",
     "typecheck": "tsc -b",
+    "test": "node --test test/*.test.ts",
     "dev:backend": "vite --mode backend"
   },
   "dependencies": {

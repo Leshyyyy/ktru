@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Box,
   Button,
   Card,
   Collapse,
@@ -38,7 +39,7 @@ import { ApiRequestError } from "../api/client";
 import { useClassify, useConfig, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
 import type { ClassifyResult, ColumnRole, FileInfo, Sheet } from "../api/types";
 import { ConfidenceBadge, KtruCode } from "../components/badges";
-import { fileSize, plural, ROLE } from "../lib/format";
+import { fileSize, pct, plural, ROLE } from "../lib/format";
 import { SAMPLE_HEADERS, SAMPLE_ROWS } from "../mock/sample";
 
 const ACCEPT = {
@@ -53,7 +54,7 @@ export function UploadPage() {
       <div>
         <Title order={2}>Подбор кодов КТРУ</Title>
         <Text c="dimmed" mt={4}>
-          Загрузите спецификацию — система извлечёт наименование, бренд и модель каждой позиции и предложит код КТРУ с
+          Загрузите спецификацию: система извлечёт наименование, бренд и модель каждой позиции и предложит код КТРУ с
           оценкой уверенности. Спорные позиции вы проверите и поправите вручную.
         </Text>
       </div>
@@ -137,9 +138,9 @@ function FileFlow() {
         <Text size="sm" c="dimmed">
           Нет файла под рукой?
         </Text>
-        <Anchor component="button" size="sm" onClick={() => send(sampleFile())} disabled={upload.isPending}>
+        <Button variant="subtle" size="sm" px="xs" onClick={() => send(sampleFile())} disabled={upload.isPending}>
           Открыть демо-спецификацию
-        </Anchor>
+        </Button>
       </Group>
     </Stack>
   );
@@ -168,7 +169,7 @@ function initialMapping(sheet: Sheet, info: FileInfo): Mapping {
 function validate(m: Mapping): string | null {
   const roles = Object.values(m);
   const n = (r: ColumnRole) => roles.filter((x) => x === r).length;
-  if (n("name") === 0) return "Выберите колонку с наименованием товара — без неё подобрать код нельзя.";
+  if (n("name") === 0) return "Выберите колонку с наименованием товара: без неё подобрать код нельзя.";
   if (n("name") > 1) return "Колонка с наименованием должна быть одна. Остальные отметьте как «Описание».";
   if (n("quantity") > 1) return "Колонка количества должна быть одна.";
   if (n("unit") > 1) return "Колонка единиц измерения должна быть одна.";
@@ -282,7 +283,7 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
           <Text fw={600}>Что в какой колонке?</Text>
           <Text size="sm" c="dimmed">
             Система угадала роли по заголовкам. Обязательна только колонка с наименованием; описание и характеристики
-            помогают точнее подобрать код. Ниже — первые строки файла.
+            помогают точнее подобрать код. Ниже первые строки файла.
           </Text>
         </Stack>
         <ScrollArea type="auto">
@@ -330,55 +331,58 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
         </ScrollArea>
       </Card>
 
-      <Card>
-        <Stack gap="sm">
-          {error ? (
-            <Alert color="orange" icon={<IconAlertCircle />} variant="light">
-              {error}
-            </Alert>
-          ) : null}
-          <Group justify="space-between" wrap="wrap" gap="md">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="compact-sm"
-              onClick={toggleAdvanced}
-              rightSection={
-                <IconChevronDown size={14} style={{ transform: advanced ? "rotate(180deg)" : undefined }} />
-              }
-            >
-              Дополнительно
-            </Button>
-            <Button
-              size="md"
-              leftSection={<IconPlayerPlay size={18} />}
-              onClick={start}
-              disabled={!!error || tooMany || notReady}
-              loading={createJob.isPending}
-            >
-              Начать обработку
-            </Button>
-          </Group>
-          <Collapse in={advanced}>
-            <Stack gap="sm" pt="xs">
-              <Switch
-                checked={useFeedback}
-                onChange={(e) => setUseFeedback(e.currentTarget.checked)}
-                label="Использовать ранее подтверждённые ответы"
-                description="Если такая же позиция уже была проверена человеком, код возьмётся из неё."
-              />
-              {config?.mode.llm_enabled && (
+      {/* Панель запуска прилипает к низу экрана: на 900 px таблица колонок выше окна, а кнопка — главное действие шага. */}
+      <Box className="k-sticky-actions">
+        <Card>
+          <Stack gap="sm">
+            {error ? (
+              <Alert color="orange" icon={<IconAlertCircle />} variant="light">
+                {error}
+              </Alert>
+            ) : null}
+            <Group justify="space-between" wrap="wrap" gap="md">
+              <Button
+                variant="subtle"
+                color="gray"
+                size="sm"
+                onClick={toggleAdvanced}
+                rightSection={
+                  <IconChevronDown size={14} style={{ transform: advanced ? "rotate(180deg)" : undefined }} />
+                }
+              >
+                Дополнительно
+              </Button>
+              <Button
+                size="md"
+                leftSection={<IconPlayerPlay size={18} />}
+                onClick={start}
+                disabled={!!error || tooMany || notReady}
+                loading={createJob.isPending}
+              >
+                Начать обработку
+              </Button>
+            </Group>
+            <Collapse in={advanced}>
+              <Stack gap="sm" pt="xs">
                 <Switch
-                  checked={useLlm}
-                  onChange={(e) => setUseLlm(e.currentTarget.checked)}
-                  label="Подключать языковую модель для сложных позиций"
-                  description="Точнее на «грязных» описаниях, но обработка идёт дольше."
+                  checked={useFeedback}
+                  onChange={(e) => setUseFeedback(e.currentTarget.checked)}
+                  label="Использовать ранее подтверждённые ответы"
+                  description="Если такая же позиция уже была проверена человеком, код возьмётся из неё."
                 />
-              )}
-            </Stack>
-          </Collapse>
-        </Stack>
-      </Card>
+                {config?.mode.llm_enabled && (
+                  <Switch
+                    checked={useLlm}
+                    onChange={(e) => setUseLlm(e.currentTarget.checked)}
+                    label="Подключать языковую модель для сложных позиций"
+                    description="Точнее на «грязных» описаниях, но обработка идёт дольше."
+                  />
+                )}
+              </Stack>
+            </Collapse>
+          </Stack>
+        </Card>
+      </Box>
     </Stack>
   );
 }
@@ -405,7 +409,7 @@ function QuickCheck() {
       <Card>
         <Stack gap="sm">
           <Textarea
-            label="Позиции — по одной на строку"
+            label="Позиции, по одной на строку"
             description="До 20 строк. Ничего не сохраняется: удобно, чтобы быстро проверить пару позиций."
             autosize
             minRows={4}
@@ -475,7 +479,7 @@ function QuickResult({ r }: { r: ClassifyResult }) {
                   Альтернативы:{" "}
                   {r.predictions
                     .slice(1)
-                    .map((p) => `${p.name} (${Math.round(p.confidence * 100)}%)`)
+                    .map((p) => `${p.ktru_code} ${p.name} (${pct(p.confidence)})`)
                     .join(", ")}
                 </Text>
               )}

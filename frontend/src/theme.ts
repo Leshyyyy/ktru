@@ -25,7 +25,7 @@ export const theme = createTheme({
   black: "#16201C",
   fontFamily: "'Onest Variable', system-ui, -apple-system, 'Segoe UI', sans-serif",
   fontFamilyMonospace: "'JetBrains Mono Variable', ui-monospace, Consolas, monospace",
-  headings: { fontWeight: "700" },
+  headings: { fontWeight: "600" },
   radius: { xs: "5px", sm: "7px", md: "10px", lg: "12px", xl: "16px" },
   defaultRadius: "md",
   cursorType: "pointer",
