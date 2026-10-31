@@ -243,10 +243,42 @@ def test_real_pipeline_downloads_missing_catalog(
 def test_catalog_download_failure_falls_back_to_stub(
     db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(migrate, "download_catalog", lambda target: False)
+    calls: list[Path] = []
+
+    def download(target: Path) -> bool:
+        calls.append(target)
+        return False
+
+    monkeypatch.setattr(migrate, "download_catalog", download)
+    monkeypatch.setattr(migrate, "CATALOG_DOWNLOAD_PAUSE_S", 0)
     real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": tmp_path / "catalog.jsonl"})
     assert migrate.main(real) == 0  # система запускается на заглушке, а не падает
+    assert len(calls) == migrate.CATALOG_DOWNLOAD_ATTEMPTS
     assert _catalog_versions(db_settings) == [("migrate:fake_catalog.jsonl", 8)]
+
+
+def test_catalog_download_retried_before_stub(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Первая попытка не удалась (короткий сбой сети) — вторая скачала каталог, заглушка не включается."""
+    path = tmp_path / "catalog" / "catalog.jsonl"
+    calls: list[Path] = []
+    pauses: list[float] = []
+
+    def flaky(target: Path) -> bool:
+        calls.append(target)
+        if len(calls) == 1:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(FIXTURE_CATALOG.read_bytes())
+        return True
+
+    monkeypatch.setattr(migrate, "download_catalog", flaky)
+    monkeypatch.setattr(migrate.time, "sleep", pauses.append)
+    settings = migrate.prepare_catalog(db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": path}))
+    assert settings.pipeline == "real"
+    assert calls == [path, path]
+    assert pauses == [migrate.CATALOG_DOWNLOAD_PAUSE_S]
 
 
 def test_real_pipeline_without_catalog_path_is_config_error(db_settings: Settings) -> None:

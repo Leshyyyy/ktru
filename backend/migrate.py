@@ -37,6 +37,10 @@ log = logging.getLogger("backend.migrate")
 ALEMBIC_INI = Path(__file__).resolve().parent / "alembic.ini"
 # Ключ pg_advisory_lock: два migrate одновременно (например, при --scale) не столкнутся.
 _LOCK_KEY = 5_250_026_001
+# Скачивание каталога: столько попыток с такой паузой, прежде чем откатиться на заглушку. migrate запускается один раз
+# (restart: "no"), поэтому короткий сбой сети у проверяющего иначе оставил бы заглушку до ручного перезапуска.
+CATALOG_DOWNLOAD_ATTEMPTS = 3
+CATALOG_DOWNLOAD_PAUSE_S = 30.0
 
 
 def main(settings: Settings | None = None) -> int:
@@ -125,14 +129,23 @@ def ensure_app_role(engine: Engine, settings: Settings) -> None:
 
 
 def prepare_catalog(settings: Settings) -> Settings:
-    """PIPELINE=real: полного каталога ещё нет на томе — скачать его. Не вышло (нет сети, Hugging Face недоступен,
-    не совпал sha256) — откат на заглушку: система запускается, а /health объясняет, почему коды 99.99.*.
+    """PIPELINE=real: полного каталога ещё нет на томе — скачать его, до CATALOG_DOWNLOAD_ATTEMPTS попыток. Не вышло
+    (нет сети, Hugging Face недоступен, не совпал sha256) — откат на заглушку: система запускается, а /health
+    объясняет, почему коды 99.99.*.
     """
     if settings.pipeline != "real":
         return settings
     if settings.ktru_catalog_path is None:
         raise ConfigError("PIPELINE=real: задайте KTRU_CATALOG_PATH — тот же файл читает worker-ml")
-    if not settings.ktru_catalog_path.is_file():
+    for attempt in range(1, CATALOG_DOWNLOAD_ATTEMPTS + 1):
+        if settings.ktru_catalog_path.is_file():
+            break
+        if attempt > 1:
+            log.warning(
+                "Каталог КТРУ не скачался, повторю",
+                extra={"attempt": attempt, "attempts": CATALOG_DOWNLOAD_ATTEMPTS, "pause_s": CATALOG_DOWNLOAD_PAUSE_S},
+            )
+            time.sleep(CATALOG_DOWNLOAD_PAUSE_S)
         log.info("Скачиваю каталог КТРУ", extra={"path": str(settings.ktru_catalog_path)})
         download_catalog(settings.ktru_catalog_path)
     if reason := catalog_fallback(settings):
