@@ -1,0 +1,52 @@
+# Быстрая проверка фронтенда: типы, тесты и сборка за пару минут, не дожидаясь job compose в backend.yml
+# (там образ frontend собирается вместе со всем стеком, обратная связь — через десятки минут).
+name: frontend
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "contracts/openapi.yaml"
+      - ".github/workflows/frontend.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "frontend/**"
+      - "contracts/openapi.yaml"
+      - ".github/workflows/frontend.yml"
+
+# Только чтение репозитория: workflow ничего не публикует и секретов не использует.
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Фронтенд — типы, тесты, сборка
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      # Действия закреплены по SHA коммита: тег можно переписать, коммит — нет.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # 22.18+: npm test запускает test/*.test.ts встроенным node:test без сборки (type stripping).
+          node-version: "22.22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Зависимости (по package-lock.json)
+        run: npm ci --no-audit --no-fund
+      - name: Проверка типов
+        run: npm run typecheck
+      - name: Тесты
+        run: npm test
+      - name: Сборка
+        run: npm run build
