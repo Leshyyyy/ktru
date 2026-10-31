@@ -1,11 +1,11 @@
 """
-Тесты для утилиты сборки и валидации датасета real_samples_tool.py.
+Тесты для утилиты сборки и валидации датасета tools/eis/real_samples_tool.py.
 """
 
 import json
 import os
 import pytest
-from real_samples_tool import DatasetBuilder, normalize_notice, process_csv
+from tools.eis.real_samples_tool import DatasetBuilder, normalize_notice, process_csv
 
 
 def test_normalize_notice():
