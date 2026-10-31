@@ -1,7 +1,7 @@
 // Тесты чистых функций форматирования. Запуск: npm test (встроенный в Node раннер, без зависимостей).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bandOf, pct } from "../src/lib/format.ts";
+import { bandOf, decimal, pct } from "../src/lib/format.ts";
 
 const T = { green: 0.85, yellow: 0.5 };
 
@@ -33,4 +33,10 @@ test("число на плашке не выше порога, если пози
 test("пустое значение", () => {
   assert.equal(pct(null), "—");
   assert.equal(pct(undefined), "—");
+});
+
+test("дроби пишутся с запятой и нужным числом знаков", () => {
+  assert.equal(decimal(0.06, 3), "0,060");
+  assert.equal(decimal(0.031, 3), "0,031");
+  assert.equal(decimal(0.05, 2), "0,05");
 });
