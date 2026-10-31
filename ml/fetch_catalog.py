@@ -11,12 +11,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
+
+from . import netfetch
 
 DATASET = "dantetemplar/zakupki-dataset"
 REVISION = "3a5fa34af05dae91ed3677de71aa65fc014e5de5"
@@ -84,14 +84,10 @@ def convert_row(row: dict) -> dict:
 
 
 def download(dest: Path, expected_sha256: str | None) -> None:
-    with urllib.request.urlopen(URL, timeout=300) as r, open(dest, "wb") as f:  # noqa: S310 — фиксированный https
-        digest = hashlib.sha256()
-        while chunk := r.read(1 << 20):
-            f.write(chunk)
-            digest.update(chunk)
-    got = digest.hexdigest()
-    if expected_sha256 and got != expected_sha256:
-        raise SystemExit(f"sha256 не совпал: ожидали {expected_sha256}, получили {got}. Файл в датасете изменился.")
+    try:
+        netfetch.download(URL, dest, sha256=expected_sha256)
+    except netfetch.DownloadError as e:
+        raise SystemExit(str(e)) from e
 
 
 def main() -> None:
