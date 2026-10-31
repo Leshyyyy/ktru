@@ -19,3 +19,8 @@ ml/artifacts/
 # Локальные переопределения compose (монтирование каталога и т. п.)
 docker-compose.override.yml
 .ruff_cache/
+
+# Выходные файлы tools/eis/real_samples_tool.py и снимок Redis при локальном запуске без Docker
+real_samples_report.txt
+real_samples.jsonl
+dump.rdb

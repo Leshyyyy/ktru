@@ -18,8 +18,8 @@ real_samples_tool.py — утилита валидации и сборки те�
 - Текст не изменяется (только очистка лишних пробелов)
 
 Использование:
-    python real_samples_tool.py csv real_hunt_list.csv [--catalog catalog_full.jsonl] [--out real_samples.jsonl]
-    python real_samples_tool.py xml ПАПКА_С_XML [--catalog catalog_full.jsonl] [--out real_samples.jsonl]
+    python -m tools.eis.real_samples_tool csv real_hunt_list.csv [--catalog catalog_full.jsonl] [--out real_samples.jsonl]
+    python -m tools.eis.real_samples_tool xml ПАПКА_С_XML [--catalog catalog_full.jsonl] [--out real_samples.jsonl]
 """
 
 import argparse
