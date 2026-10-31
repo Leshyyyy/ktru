@@ -1,6 +1,13 @@
 import type { Band, ColumnRole, ItemFlag, ItemStatus, JobStatus } from "../api/types";
 
-export const pct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+/**
+ * Проценты округляем вниз, а не к ближайшему: уверенность 0.846 — это «84%». Иначе жёлтая позиция показывалась
+ * как «85%» и выглядела прошедшей зелёный порог, хотя «Подтвердить все от 85%» её справедливо пропускает.
+ * Добавка 1e-9 гасит ошибку двоичной дроби: 0.57 * 100 = 56.99999999999999, а порог 57% должен остаться 57%.
+ */
+export const pctInt = (v: number) => Math.floor(v * 100 + 1e-9);
+
+export const pct = (v: number | null | undefined) => (v == null ? "—" : `${pctInt(v)}%`);
 
 export const bandOf = (c: number | null | undefined, t: { green: number; yellow: number }): Band | null =>
   c == null ? null : c >= t.green ? "green" : c >= t.yellow ? "yellow" : "red";
@@ -40,7 +47,7 @@ export const FLAG: Record<ItemFlag, { label: string; short: string; hint: string
   archived_code: {
     label: "Код в архиве",
     short: "код в архиве каталога",
-    hint: "Код помечен в каталоге как архивный — подберите действующий.",
+    hint: "Код помечен в каталоге как архивный. Подберите действующий.",
   },
   low_extraction_confidence: {
     label: "Атрибуты распознаны неуверенно",

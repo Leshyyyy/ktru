@@ -26,7 +26,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
-import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
+import { useDebouncedValue, useHotkeys, useMediaQuery } from "@mantine/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
@@ -35,6 +35,7 @@ import {
   IconChecks,
   IconDownload,
   IconInfoCircle,
+  IconListCheck,
   IconPlayerStop,
   IconSearch,
   IconUser,
@@ -63,9 +64,11 @@ import {
 } from "../components/badges";
 import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
 import { ItemDrawer } from "../components/ItemDrawer";
-import { BAND, dateTime, duration, FLAG, pct, plural } from "../lib/format";
+import { BAND, dateTime, duration, FLAG, pct, pctInt, plural } from "../lib/format";
 
 const PAGE_SIZE = 50;
+/** Ширина карточки позиции (ItemDrawer) — на широком экране страница отступает на неё, таблица не закрыта. */
+const DRAWER_W = 580;
 
 export function JobPage() {
   const { jobId = "" } = useParams();
@@ -159,6 +162,31 @@ function JobView({ job }: { job: Job }) {
   const filtered = !!(band || status || flag || group_id || debouncedQ);
   const withOverlay = useWithOverlay();
 
+  // Сколько позиций ждут человека — для главной кнопки «Проверить спорные».
+  const disputed = useItems(job.job_id, { status: "needs_review", page: 1, page_size: 1 }).data?.total ?? 0;
+  // Карточка открыта на широком экране — страница отступает на её ширину, таблица видна целиком.
+  const wide = useMediaQuery("(min-width: 75em)");
+  const split = !!openId && !!wide;
+
+  /** Очередь проверки: только позиции «Требует проверки», карточка первой из них. */
+  const startReview = () => {
+    setQ("");
+    const n = new URLSearchParams();
+    if (sort !== "row_index") n.set("sort", sort);
+    n.set("status", "needs_review");
+    n.set("open", "first");
+    latest.current = n;
+    setSp(n, { replace: true });
+  };
+  // ?open=first — открыть первую позицию, как только загрузится список (кнопка выше и ссылка из списка задач).
+  const openFirst = sp.get("open") === "first";
+  useEffect(() => {
+    if (!openFirst || !list) return;
+    if (list.items[0]) setOpenId(list.items[0].item_id);
+    setParam("open", null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openFirst, list]);
+
   /** Следующая позиция «Требует проверки» ниже текущей на странице; если таких нет — просто следующая. */
   const nextDisputed = (): string | null => {
     const rest = (list?.items ?? []).slice(idx + 1).map(withOverlay);
@@ -176,7 +204,11 @@ function JobView({ job }: { job: Job }) {
   );
 
   return (
-    <Stack gap="lg">
+    <Stack
+      gap="lg"
+      // Отступ справа = ширина карточки минус то, что уже даёт поле страницы (40 px и поля по краям после 1440).
+      style={split ? { marginRight: `calc(${DRAWER_W - 24}px - max(0px, (100vw - 1440px) / 2))` } : undefined}
+    >
       <Stack gap={6}>
         <BackLink name={job.filename} />
         <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
@@ -202,16 +234,22 @@ function JobView({ job }: { job: Job }) {
           </div>
           <Group gap="sm">
             {active && <CancelButton job={job} />}
+            {disputed > 0 && (
+              <Button leftSection={<IconListCheck size={16} />} onClick={startReview}>
+                Проверить спорные · {disputed}
+              </Button>
+            )}
             {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
-            <ExportMenu job={job} disabled={!finished} />
+            {/* Пока есть спорные, главное — проверка; когда их нет, главной становится выгрузка. */}
+            <ExportMenu job={job} disabled={!finished} emphasis={disputed === 0} />
           </Group>
         </Group>
       </Stack>
 
       {job.effective_mode === "degraded" && (
-        <Tooltip label="Языковая модель недоступна: позиции обработаны правилами и поиском. На «грязных» описаниях жёлтых позиций может быть больше.">
+        <Tooltip label="Языковая модель недоступна: позиции разобраны правилами и поиском по каталогу. На «грязных» описаниях жёлтых позиций может быть больше.">
           <span className="k-mode">
-            <IconInfoCircle size={14} /> Без LLM: работают правила и реранкер
+            <IconInfoCircle size={14} /> Без языковой модели: коды подобраны поиском по каталогу
           </span>
         </Tooltip>
       )}
@@ -234,6 +272,8 @@ function JobView({ job }: { job: Job }) {
       <Card p={0}>
         <Group p="md" gap="sm" wrap="wrap">
           <TextInput
+            id="items-search"
+            aria-label="Поиск по тексту позиции"
             placeholder="Поиск по тексту позиции"
             leftSection={<IconSearch size={16} />}
             value={q}
@@ -241,11 +281,18 @@ function JobView({ job }: { job: Job }) {
             rightSection={q ? <CloseButton size="sm" onClick={() => setQ("")} aria-label="Очистить" /> : null}
             w={{ base: "100%", sm: 280 }}
           />
+          {/* Включается кнопкой «Проверить спорные»: видно, почему в таблице не все строки, и можно снять. */}
+          <FilterChip
+            active={status === "needs_review"}
+            onClick={() => setParam("status", status === "needs_review" ? null : "needs_review")}
+          >
+            Только требующие проверки
+          </FilterChip>
           <FilterChip
             active={sort === "confidence_asc"}
             onClick={() => setParam("sort", sort === "confidence_asc" ? null : "confidence_asc")}
           >
-            Сначала спорные
+            Сначала неуверенные
           </FilterChip>
           <Menu position="bottom-start" withinPortal>
             <Menu.Target>
@@ -283,9 +330,12 @@ function JobView({ job }: { job: Job }) {
               Только одинаковые товары
             </Badge>
           )}
-          <Text size="xs" c="var(--k-faint)" ml="auto" visibleFrom="md">
-            <Kbd size="xs">J</Kbd> <Kbd size="xs">K</Kbd> — по строкам, <Kbd size="xs">Enter</Kbd> — подтвердить
-          </Text>
+          {!split && (
+            <Text size="xs" c="var(--k-faint)" ml="auto" visibleFrom="md">
+              <Kbd size="sm">J</Kbd> <Kbd size="sm">K</Kbd> переход по строкам, <Kbd size="sm">Enter</Kbd> открыть и
+              подтвердить
+            </Text>
+          )}
         </Group>
 
         <ItemsTable
@@ -293,6 +343,7 @@ function JobView({ job }: { job: Job }) {
           loading={!list}
           fetching={isFetching}
           selectedId={openId}
+          compact={split}
           onOpen={setOpenId}
           onGroup={(g) => setParam("group", g)}
         />
@@ -321,7 +372,7 @@ function JobView({ job }: { job: Job }) {
         {list && list.total > PAGE_SIZE && (
           <Group justify="space-between" p="md">
             <Text size="sm" c="dimmed">
-              Показаны {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, list.total)} из {list.total}
+              Показаны с {(page - 1) * PAGE_SIZE + 1} по {Math.min(page * PAGE_SIZE, list.total)} из {list.total}
             </Text>
             <Pagination
               value={page}
@@ -354,7 +405,7 @@ function ProgressCard({ job }: { job: Job }) {
   const done = job.processed_items + job.failed_items;
   const label =
     job.status === "queued"
-      ? "Задача в очереди — сейчас начнётся"
+      ? "Задача в очереди, сейчас начнётся"
       : job.status === "parsing"
         ? "Читаем файл и считаем позиции"
         : `Обработано ${done} из ${job.total_items}`;
@@ -374,7 +425,7 @@ function ProgressCard({ job }: { job: Job }) {
           striped
         />
         <Text size="xs" c="dimmed">
-          Вкладку можно закрыть — обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно
+          Вкладку можно закрыть: обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно
           проверять сразу.
         </Text>
       </Stack>
@@ -416,7 +467,8 @@ function Summary({
           key={x.key}
           active={band === x.key}
           onClick={() => onBand(band === x.key ? null : x.key)}
-          color={`var(--k-${x.key === "green" ? "hi" : x.key === "yellow" ? "mid" : "lo"})`}
+          color={`var(--k-${ZONE[x.key]})`}
+          ink={`var(--k-${ZONE[x.key]}-ink)`}
           label={x.label}
           value={x.value}
           hint={`${BAND[x.key].hint}: ${x.hint}`}
@@ -434,20 +486,25 @@ function Summary({
   );
 }
 
+const ZONE: Record<Band, "hi" | "mid" | "lo"> = { green: "hi", yellow: "mid", red: "lo" };
+
 function Tile(p: {
   active: boolean;
   onClick: () => void;
+  /** Цвет зоны для квадратика-метки. */
   color?: string;
+  /** Цвет числа: тёмный вариант зоны, чтобы контраст был не ниже 4.5:1. */
+  ink?: string;
   label: string;
   value: number;
   hint?: string;
 }) {
   const body = (
     <UnstyledButton onClick={p.onClick} aria-pressed={p.active} className="k-tile" data-active={p.active || undefined}>
-      <Text fz={24} fw={700} className="tabular" lh={1.2} c={p.color}>
+      <Text fz={24} fw={600} className="tabular" lh={1.2} c={p.ink ?? p.color}>
         {p.value}
       </Text>
-      <Group gap={7} wrap="nowrap">
+      <Group gap={8} wrap="nowrap">
         {p.color && <Box w={9} h={9} style={{ borderRadius: 3, background: p.color, flex: "none" }} />}
         <Text size="sm" c="dimmed">
           {p.label}
@@ -483,6 +540,7 @@ function ItemsTable({
   loading,
   fetching,
   selectedId,
+  compact,
   onOpen,
   onGroup,
 }: {
@@ -490,11 +548,20 @@ function ItemsTable({
   loading: boolean;
   fetching: boolean;
   selectedId: string | null;
+  /** Рядом открыта карточка: без «Кол-во», уверенность и статус в одной колонке — таблица помещается целиком. */
+  compact: boolean;
   onOpen: (id: string) => void;
   onGroup: (groupId: string) => void;
 }) {
   const { decide } = useDecisions();
   const withOverlay = useWithOverlay();
+  const t = useThresholds();
+  const cols = compact ? 4 : 7;
+  // Карточка открыта (J/K, переход к следующей спорной) — выбранная строка всегда в поле зрения.
+  useEffect(() => {
+    if (!selectedId) return;
+    document.querySelector(`[data-item-id="${selectedId}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [selectedId]);
   return (
     <ScrollArea type="auto">
       <Table
@@ -502,34 +569,45 @@ function ItemsTable({
         highlightOnHover
         verticalSpacing={10}
         horizontalSpacing={12}
-        miw={1040}
+        miw={compact ? 560 : 1040}
         style={{ opacity: fetching && !loading ? 0.85 : 1, transition: "opacity .2s" }}
       >
         <Table.Thead>
           <Table.Tr>
-            <Table.Th w={64}>Стр.</Table.Th>
-            <Table.Th>Позиция и извлечённые атрибуты</Table.Th>
-            <Table.Th w={90}>Кол-во</Table.Th>
-            <Table.Th w={300}>Код КТРУ (rank 1 или решение)</Table.Th>
-            <Table.Th w={130}>Уверенность</Table.Th>
-            <Table.Th w={190}>Статус</Table.Th>
-            <Table.Th w={52} />
+            <Table.Th w={compact ? 52 : 64}>Стр.</Table.Th>
+            <Table.Th>{compact ? "Позиция" : "Позиция и извлечённые атрибуты"}</Table.Th>
+            {!compact && <Table.Th w={90}>Кол-во</Table.Th>}
+            <Table.Th w={compact ? 200 : 300}>Код КТРУ</Table.Th>
+            {compact ? (
+              <Table.Th w={140}>Уверенность</Table.Th>
+            ) : (
+              <>
+                <Table.Th w={130}>Уверенность</Table.Th>
+                <Table.Th w={190}>Статус</Table.Th>
+              </>
+            )}
+            {/* Рядом открыта карточка — решения принимаются в ней, быстрая кнопка в строке не нужна. */}
+            {!compact && <Table.Th w={52} />}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {loading &&
             Array.from({ length: 6 }).map((_, i) => (
               <Table.Tr key={i}>
-                <Table.Td colSpan={7}>
+                <Table.Td colSpan={cols}>
                   <Skeleton h={34} />
                 </Table.Td>
               </Table.Tr>
             ))}
           {items?.map(withOverlay).map((it) => {
-            const canConfirm = it.status === "processed" || it.status === "needs_review";
+            // Быстрое подтверждение из таблицы — только когда система уверена хотя бы на жёлтый порог;
+            // красную позицию подтверждают из карточки, сравнив варианты.
+            const unsure = (it.predictions[0]?.confidence ?? 0) < t.yellow;
+            const canConfirm = (it.status === "processed" || it.status === "needs_review") && !unsure;
             return (
               <Table.Tr
                 key={it.item_id}
+                data-item-id={it.item_id}
                 className={`row-clickable${selectedId === it.item_id ? " row-selected" : ""}`}
                 onClick={() => onOpen(it.item_id)}
               >
@@ -538,14 +616,14 @@ function ItemsTable({
                     {it.row_index + 1}
                   </Text>
                 </Table.Td>
-                <Table.Td style={{ minWidth: 0 }}>
-                  <Text size="sm" lineClamp={1}>
-                    {it.raw_text}
-                  </Text>
-                  <Text size="xs" c="dimmed" mt={2} component="div">
+                <Table.Td style={{ overflowWrap: "anywhere" }}>
+                  {/* Текст позиции не обрезаем: по нему проверяют код. Рядом с карточкой (там он целиком)
+                      строка короче: только извлечённые наименование, бренд и модель. */}
+                  {!(compact && it.extracted) && <Text size="sm">{it.raw_text}</Text>}
+                  <Text size={compact ? "sm" : "xs"} c="dimmed" mt={compact ? 0 : 2} component="div">
                     {it.extracted && (
                       <>
-                        <Text span size="xs" fw={600} c="var(--k-ink)">
+                        <Text span inherit fw={600} c="var(--k-ink)">
                           {it.extracted.name}
                         </Text>
                         {[it.extracted.brand, it.extracted.model].filter(Boolean).map((v) => ` · ${v}`)}
@@ -558,18 +636,20 @@ function ItemsTable({
                     )}
                   </Text>
                 </Table.Td>
-                <Table.Td>
-                  <Text size="sm" c="dimmed" className="tabular" style={{ whiteSpace: "nowrap" }}>
-                    {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
-                  </Text>
-                </Table.Td>
+                {!compact && (
+                  <Table.Td>
+                    <Text size="sm" c="dimmed" className="tabular" style={{ whiteSpace: "nowrap" }}>
+                      {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
+                    </Text>
+                  </Table.Td>
+                )}
                 <Table.Td>
                   {it.status === "pending" ? (
                     <Text size="sm" c="dimmed">
                       ожидает обработки
                     </Text>
                   ) : it.status === "failed" && !it.final?.ktru_code ? (
-                    <Text size="sm" c="var(--k-lo)">
+                    <Text size="sm" c="var(--k-lo-ink)">
                       {it.error ?? "Ошибка обработки"}
                     </Text>
                   ) : (
@@ -582,39 +662,52 @@ function ItemsTable({
                           </Tooltip>
                         )}
                       </Group>
-                      <Text size="xs" c="dimmed" lineClamp={1} mt={2}>
+                      <Text size="xs" c="dimmed" mt={2}>
                         {it.final?.name}
                       </Text>
                     </div>
                   )}
                 </Table.Td>
-                <Table.Td>
-                  <ConfidenceBadge value={it.predictions[0]?.confidence} />
-                </Table.Td>
-                <Table.Td>
-                  <ItemStatusBadge status={it.status} />
-                  <FlagChips flags={it.flags} />
-                </Table.Td>
-                <Table.Td onClick={(e) => e.stopPropagation()}>
-                  {canConfirm && it.predictions[0] && (
-                    <Tooltip label="Подтвердить предложенный код">
-                      <ActionIcon
-                        variant="light"
-                        onClick={() =>
-                          decide({
-                            kind: "confirm",
-                            item: it,
-                            code: it.predictions[0].ktru_code,
-                            name: it.predictions[0].name,
-                          })
-                        }
-                        aria-label="Подтвердить"
-                      >
-                        <IconCheck size={16} />
-                      </ActionIcon>
-                    </Tooltip>
-                  )}
-                </Table.Td>
+                {compact ? (
+                  <Table.Td>
+                    <ConfidenceBadge value={it.predictions[0]?.confidence} />
+                    <Box mt={6}>
+                      <ItemStatusBadge status={it.status} />
+                    </Box>
+                  </Table.Td>
+                ) : (
+                  <>
+                    <Table.Td>
+                      <ConfidenceBadge value={it.predictions[0]?.confidence} />
+                    </Table.Td>
+                    <Table.Td>
+                      <ItemStatusBadge status={it.status} />
+                      <FlagChips flags={it.flags} />
+                    </Table.Td>
+                  </>
+                )}
+                {!compact && (
+                  <Table.Td onClick={(e) => e.stopPropagation()}>
+                    {canConfirm && it.predictions[0] && (
+                      <Tooltip label="Подтвердить предложенный код">
+                        <ActionIcon
+                          variant="light"
+                          onClick={() =>
+                            decide({
+                              kind: "confirm",
+                              item: it,
+                              code: it.predictions[0].ktru_code,
+                              name: it.predictions[0].name,
+                            })
+                          }
+                          aria-label="Подтвердить"
+                        >
+                          <IconCheck size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                  </Table.Td>
+                )}
               </Table.Tr>
             );
           })}
@@ -661,7 +754,7 @@ function BulkConfirm({ job }: { job: Job }) {
           </Text>
           <NumberInput
             label="Порог уверенности, %"
-            defaultValue={Math.round(min * 100)}
+            defaultValue={pctInt(min)}
             min={50}
             max={100}
             onChange={(v) => {
@@ -715,12 +808,12 @@ function BulkConfirm({ job }: { job: Job }) {
   );
 }
 
-function ExportMenu({ job, disabled }: { job: Job; disabled: boolean }) {
+function ExportMenu({ job, disabled, emphasis }: { job: Job; disabled: boolean; emphasis: boolean }) {
   const exp = useExport();
   const formats = useMemo(
     () =>
       [
-        { f: "source", label: "Как исходный файл", hint: "тот же формат, для pdf — xlsx" },
+        { f: "source", label: "Как исходный файл", hint: "тот же формат; pdf выгрузим в xlsx" },
         { f: "xlsx", label: "Excel (xlsx)" },
         { f: "csv", label: "CSV" },
         { f: "json", label: "JSON" },
@@ -736,14 +829,19 @@ function ExportMenu({ job, disabled }: { job: Job; disabled: boolean }) {
             color: unreviewed ? "yellow" : "primary",
             title: "Файл выгружен",
             message: unreviewed
-              ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком — они помечены в колонке «Источник».`
+              ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком. Они помечены в колонке «Источник».`
               : "Все позиции проверены.",
           }),
         onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
       },
     );
   const button = (
-    <Button color="#16201C" leftSection={<IconDownload size={16} />} disabled={disabled} loading={exp.isPending}>
+    <Button
+      {...(emphasis ? { color: "#16201C" } : { variant: "default" })}
+      leftSection={<IconDownload size={16} />}
+      disabled={disabled}
+      loading={exp.isPending}
+    >
       Выгрузить
     </Button>
   );

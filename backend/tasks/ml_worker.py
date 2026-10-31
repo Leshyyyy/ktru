@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import threading
 import time
 import uuid
 from datetime import UTC, datetime
@@ -21,10 +22,12 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from redis import Redis
 
 from backend.core import processing
+from backend.core.catalog import CatalogSync
 from backend.core.db import worker_engine
 from backend.core.logs import job_id_var
 from backend.core.ml import catalog_fallback, load_pipeline, pipeline_mode
-from backend.core.queue import PROCESS_CHUNK
+from backend.core.quality import run_quality
+from backend.core.queue import CLASSIFY, PROCESS_CHUNK, QUALITY_RUN
 from backend.core.readiness import Heartbeat
 from backend.core.settings import Settings
 
@@ -46,6 +49,9 @@ _state: dict[str, Any] = {
     "heartbeat": None,
     "examples": processing.ExampleFeed(),
 }
+
+
+_stopping = threading.Event()
 
 
 def _effective_settings() -> Settings:
@@ -83,6 +89,24 @@ def process_chunk(self: Task, job_id: str, item_ids: list[str]) -> None:
         job_id_var.reset(token)
 
 
+@app.task(name=CLASSIFY, ignore_result=False, soft_time_limit=60, time_limit=90)
+def classify(texts: list[str], catalog_version_id: str) -> list[dict[str, Any]]:
+    """POST /classify: ответ возвращается API через бэкенд результатов; ошибка — исключение у ожидающего API."""
+    pipeline = get_pipeline()
+    if pipeline is None:
+        raise RuntimeError("Конвейер не загружен")
+    return processing.classify_texts(worker_engine(settings), pipeline, texts, uuid.UUID(catalog_version_id))
+
+
+@app.task(name=QUALITY_RUN, ignore_result=True, soft_time_limit=1800, time_limit=1900)
+def quality_run(run_id: str) -> None:
+    """POST /quality/run: оценка на размеченном наборе. Занимает очередь ml на время прогона (сотни позиций)."""
+    pipeline = get_pipeline()
+    if pipeline is None:
+        raise RuntimeError("Конвейер не загружен")
+    run_quality(worker_engine(settings), pipeline, uuid.UUID(run_id), pipeline_mode(pipeline, _effective_settings()))
+
+
 @worker_process_init.connect
 def _load_pipeline(**_: Any) -> None:
     started_at = time.perf_counter()
@@ -105,10 +129,25 @@ def _load_pipeline(**_: Any) -> None:
     heartbeat = Heartbeat(redis, _payload, settings.ml_heartbeat_interval_s, settings.ml_ready_ttl_s)
     heartbeat.start()
     _state["heartbeat"] = heartbeat
+    if _state["pipeline"] is not None:
+        sync = CatalogSync(worker_engine(settings), _state["pipeline"])
+        threading.Thread(target=_sync_catalog, args=(sync,), name="catalog-sync", daemon=True).start()
+
+
+def _sync_catalog(sync: CatalogSync) -> None:
+    """FR-8.1: раз в ML_HEARTBEAT_INTERVAL_S проверяет, нет ли новой версии каталога (сразу после старта — тоже)."""
+    while True:
+        try:
+            sync.poll()
+        except Exception:
+            log.warning("Не удалось проверить версии каталога", exc_info=True)
+        if _stopping.wait(settings.ml_heartbeat_interval_s):
+            return
 
 
 @worker_process_shutdown.connect
 def _stop_heartbeat(**_: Any) -> None:
+    _stopping.set()
     if heartbeat := _state["heartbeat"]:
         heartbeat.stop()
 
@@ -128,7 +167,17 @@ def _payload() -> dict[str, Any]:
         "mode": pipeline_mode(pipeline, _effective_settings()),
         "error": _state["error"],
         "fallback": _state["fallback"],
+        "catalog_versions": _loaded_versions(pipeline),
         "host": socket.gethostname(),
         "pid": os.getpid(),
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
+
+
+def _loaded_versions(pipeline: Any) -> list[str] | None:
+    """Версии каталога в памяти конвейера (для отладки FR-8.1); «» — каталог из файла KTRU_CATALOG_PATH."""
+    loaded = getattr(pipeline, "loaded_versions", None)
+    try:
+        return list(loaded()) if loaded else None
+    except Exception:
+        return None

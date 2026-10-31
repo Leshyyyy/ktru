@@ -246,6 +246,39 @@ def process_chunk(
     _save_results(engine, settings, job_id, check_results(raw, results, known_codes=catalog), catalog)
 
 
+def classify_texts(
+    engine: Engine, pipeline: Pipeline, texts: Sequence[str], version_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """POST /classify: несколько строк через конвейер без записи в базу. Ответ проверяется так же, как у пачки
+    задачи (check_results по версии каталога). → ClassifyResult из openapi.yaml в виде JSON-словарей.
+    """
+    raw = [RawItem(item_id=str(n), text=text) for n, text in enumerate(texts)]
+    results = pipeline.classify_batch(raw, str(version_id), PipelineOptions())
+    checked = check_results(raw, results, known_codes=_catalog_statuses(engine, version_id, results))
+    return [
+        {
+            "text": item.text,
+            "extracted": result.extracted.model_dump(mode="json") if result.extracted else None,
+            "predictions": [
+                {
+                    "rank": p.rank,
+                    "ktru_code": p.ktru_code,
+                    "okpd2_code": p.okpd2_code,
+                    "name": p.name,
+                    "confidence": round(p.confidence, 4),
+                    "explanation": p.explanation,
+                    "why_not_chosen": p.why_not_chosen,
+                    "characteristic_matches": [m.model_dump(mode="json") for m in p.characteristic_matches],
+                }
+                for p in result.predictions
+            ],
+            "path": result.path if result.predictions else None,
+            "error": result.error,
+        }
+        for item, result in zip(raw, checked, strict=True)
+    ]
+
+
 def _catalog_statuses(engine: Engine, version_id: uuid.UUID, results: Sequence[ClassificationResult]) -> dict[str, str]:
     """Коды из ответа ML, которые есть в версии каталога задачи, и их статус (active / archived)."""
     codes = {p.ktru_code for r in results for p in r.predictions}

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -178,6 +178,21 @@ class CatalogVersionList(BaseModel):
 # --- Система --------------------------------------------------------------------------------------------------
 
 
+class RecentError(BaseModel):
+    job_id: uuid.UUID
+    error: str
+    at: datetime
+
+
+class Stats(BaseModel):
+    jobs_total: int
+    items_total: int
+    green_correction_rate: float | None
+    avg_seconds_per_1000: float | None
+    failed_items_share: float
+    recent_errors: list[RecentError]
+
+
 class ComponentHealth(BaseModel):
     ok: bool
     detail: str | None = None
@@ -218,3 +233,48 @@ class PublicConfig(BaseModel):
     limits: Limits
     thresholds: Thresholds
     mode: Mode
+
+
+# --- Быстрая проверка ---------------------------------------------------------------------------------------
+
+
+class ClassifyText(BaseModel):
+    text: str = Field(max_length=5000)
+
+
+class ClassifyRequest(BaseModel):
+    items: list[ClassifyText] = Field(min_length=1)
+
+
+class ClassifyResult(BaseModel):
+    text: str
+    extracted: ExtractedAttributes | None
+    predictions: list[Prediction]
+    path: Literal["fast", "rerank"] | None
+    error: str | None
+
+
+class ClassifyResponse(BaseModel):
+    results: list[ClassifyResult]
+
+
+# --- Качество -------------------------------------------------------------------------------------------------
+
+
+class QualityRunCreate(BaseModel):
+    split: Literal["dev", "test"]
+
+
+class QualityRun(BaseModel):
+    run_id: uuid.UUID
+    split: Literal["dev", "test"]
+    status: Literal["running", "done", "failed"]
+    config: dict[str, Any]
+    # QualityMetrics: ключи evaluate() из ml/ (ml/CLAUDE.md); пустые значения не отдаются.
+    metrics: dict[str, Any] | None
+    created_at: datetime
+
+
+class QualityLatest(BaseModel):
+    dev: QualityRun | None = None
+    test: QualityRun | None = None

@@ -1,4 +1,5 @@
-"""Разовый контейнер migrate: миграции, роль приложения в БД и стартовый каталог. `python -m backend.migrate`.
+"""Разовый контейнер migrate: миграции, роль приложения в БД, стартовый каталог и разметка для оценки качества.
+`python -m backend.migrate`.
 
 Остальные сервисы compose ждут его успешного завершения. Повторный запуск ничего не ломает и не дублирует.
 """
@@ -17,11 +18,18 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.core.catalog import CatalogImportError, download_catalog, file_sha256, import_catalog_file
+from backend.core.catalog import (
+    MIGRATE_SOURCE,
+    CatalogImportError,
+    download_catalog,
+    file_sha256,
+    import_catalog_file,
+)
 from backend.core.db import make_engine
 from backend.core.logs import setup_logging
 from backend.core.ml import catalog_fallback
 from backend.core.models import CatalogVersion
+from backend.core.quality import seed_eval_samples
 from backend.core.settings import ConfigError, Settings, get_settings
 
 log = logging.getLogger("backend.migrate")
@@ -43,6 +51,7 @@ def main(settings: Settings | None = None) -> int:
                 upgrade(engine)
                 ensure_app_role(engine, settings)
                 seed_catalog(engine, prepare_catalog(settings))
+                seed_eval_samples(engine, settings.eval_samples_dir)
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY})
     except (ConfigError, CatalogImportError) as e:
@@ -150,7 +159,7 @@ def seed_catalog(engine: Engine, settings: Settings) -> None:
         if existing is not None:
             log.info("Каталог уже загружен", extra={"version_id": str(existing), "file": path.name})
             return
-        version = import_catalog_file(session, path, source=f"migrate:{path.name}", note=note)
+        version = import_catalog_file(session, path, source=f"{MIGRATE_SOURCE}{path.name}", note=note)
         log.info(
             "Каталог загружен",
             extra={"version_id": str(version.id), "items": version.items_count, "file": path.name},

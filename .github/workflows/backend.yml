@@ -7,6 +7,7 @@ on:
       - "backend/**"
       - "contracts/**"
       - "ml/**"
+      - "tests/**"
       - "docker-compose.yml"
       - ".dockerignore"
       - ".env.example"
@@ -19,6 +20,7 @@ on:
       - "backend/**"
       - "contracts/**"
       - "ml/**"
+      - "tests/**"
       - "docker-compose.yml"
       - ".dockerignore"
       - ".env.example"
@@ -71,6 +73,8 @@ jobs:
         run: pytest backend/tests
       - name: Тесты разбора файлов и экспорта (backend/files)
         run: pytest backend/files/tests
+      - name: End-to-End тесты полного конвейера (tests/e2e)
+        run: pytest tests/e2e
       - name: Известные уязвимости в зависимостях
         run: pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r backend/requirements-dev.txt
       - name: Известные уязвимости в зависимостях worker-ml
@@ -109,6 +113,9 @@ jobs:
           import json, sys
           models = json.load(sys.stdin)["components"]["models"]
           sys.exit(f"worker-ml работает не на настоящем ML: {models}" if models.get("detail") else 0)'
+      - name: Эндпоинты на настоящем ML (/classify, /stats, /quality/latest, импорт каталога)
+        # Импорт делает маленький каталог текущим для новых задач, поэтому задачи в CI после него не создаются.
+        run: python3 backend/tests/compose_smoke.py http://127.0.0.1:8000/api/v1
       - name: Интерфейс и API через nginx (сервис frontend, :8080)
         run: |
           for _ in $(seq 1 24); do

@@ -20,7 +20,8 @@ from backend.app.health import HealthChecker
 from backend.app.main import create_app
 from backend.core import processing
 from backend.core.db import make_engine
-from backend.core.readiness import write_status
+from backend.core.queue import ClassifyTimeout
+from backend.core.readiness import read_status, write_status
 from backend.core.settings import Settings
 from contracts.ml_contracts import Pipeline
 from contracts.stub_pipeline import StubPipeline
@@ -121,6 +122,12 @@ class FakeQueue:
         self.parse: list[str] = []
         self.chunks: list[tuple[str, list[str]]] = []
         self.broken = False
+        # Синхронные задачи (POST /classify) выполняются сразу, как их выполнил бы worker-ml.
+        self.engine: Engine | None = None
+        self.pipeline: Pipeline = StubPipeline()
+        self.classify_timeout = False
+        self.quality: list[str] = []
+        self.catalog_imports: list[tuple[str, str]] = []
 
     def _check(self) -> None:
         if self.broken:
@@ -133,6 +140,21 @@ class FakeQueue:
     def process_chunk(self, job_id: str, item_ids: list[str]) -> None:
         self._check()
         self.chunks.append((job_id, item_ids))
+
+    def import_catalog(self, version_id: str, storage_path: str) -> None:
+        self._check()
+        self.catalog_imports.append((version_id, storage_path))
+
+    def quality_run(self, run_id: str) -> None:
+        self._check()
+        self.quality.append(run_id)
+
+    def classify(self, texts: list[str], catalog_version_id: str, timeout_s: float) -> list[dict[str, Any]]:
+        self._check()
+        if self.classify_timeout:
+            raise ClassifyTimeout
+        assert self.engine is not None, "FakeQueue.engine не задан"
+        return processing.classify_texts(self.engine, self.pipeline, texts, uuid.UUID(catalog_version_id))
 
 
 def drain(queue: FakeQueue, engine: Engine, settings: Settings, pipeline: Pipeline | None = None) -> None:
@@ -165,7 +187,7 @@ def _admin_exec(admin_url: URL, statement: str) -> None:
 
 
 @pytest.fixture
-def db_settings(admin_url: URL) -> Iterator[Settings]:
+def db_settings(admin_url: URL, tmp_path: Path) -> Iterator[Settings]:
     """Пустая база и своя роль приложения на каждый тест; после теста удаляются."""
     suffix = uuid.uuid4().hex[:10]
     database, role = f"ktru_test_{suffix}", f"ktru_app_{suffix}"
@@ -179,6 +201,9 @@ def db_settings(admin_url: URL) -> Iterator[Settings]:
             postgres_password=admin_url.password,
             app_db_user=role,
             app_db_password="app-secret",
+            # Разметку из contracts/fixtures/eval тесты не видят: test_quality_api рассчитан на пустой набор.
+            # Папка «no-eval», а не «eval»: тесты сами пишут разметку в tmp_path / "eval", а tmp_path в тесте общий.
+            eval_samples_dir=tmp_path / "no-eval",
         )
     finally:
         _admin_exec(admin_url, f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')
@@ -245,9 +270,11 @@ def stack(db_settings: Settings, tmp_path: Path, fake_redis: FakeRedis) -> Itera
     write_status(fake_redis, STUB_STATUS, 30)
     engine = make_engine(settings.app_database_url(), application_name="ktru-tests", null_pool=True)
     queue = FakeQueue()
+    queue.engine = engine
     app = create_app(settings)
     app.dependency_overrides[deps.get_queue] = lambda: queue
     app.dependency_overrides[deps.get_health_checker] = lambda: HealthChecker(engine, fake_redis)  # type: ignore[arg-type]
+    app.dependency_overrides[deps.get_ml_status] = lambda: read_status(fake_redis)
     with TestClient(app) as client:
         yield Stack(client, queue, settings, engine, fake_redis)
     engine.dispose()
