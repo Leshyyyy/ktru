@@ -15,11 +15,10 @@ from backend.files.exceptions import (
     MappingInvalidError,
     UnsupportedTypeError,
 )
-from backend.files.reader import _detect_csv_encoding_and_delimiter
+from backend.files.reader import MAX_ROWS_IN_FILE, _detect_csv_encoding_and_delimiter
 from backend.files.schemas import ColumnMappingItem, ColumnRole, ParsedRow
 
 MAX_ITEMS_PER_JOB = 1000
-MAX_ROWS_IN_FILE = 5000
 
 
 def validate_column_mapping(mapping: Union[List[ColumnMappingItem], List[Dict[str, Any]]]) -> Dict[int, ColumnRole]:
