@@ -9,6 +9,9 @@ export const pctInt = (v: number) => Math.floor(v * 100 + 1e-9);
 
 export const pct = (v: number | null | undefined) => (v == null ? "—" : `${pctInt(v)}%`);
 
+/** Дробь по-русски, с запятой: 0.06 → «0,060» при digits = 3. */
+export const decimal = (v: number, digits: number) => v.toFixed(digits).replace(".", ",");
+
 export const bandOf = (c: number | null | undefined, t: { green: number; yellow: number }): Band | null =>
   c == null ? null : c >= t.green ? "green" : c >= t.yellow ? "yellow" : "red";
 

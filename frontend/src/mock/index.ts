@@ -283,7 +283,7 @@ const notFound = (object: string, message = "Не найдено.") => err(404, 
 const EVAL_MS = 4000; // «прогон» в имитации длится 4 с, чтобы было видно состояние «идёт оценка»
 const EVAL_DEMO: Record<"dev" | "test", { samples: number; metrics: Record<string, number> }> = {
   dev: {
-    samples: 210,
+    samples: 700,
     metrics: {
       top1_full_code: 0.88,
       top1_any_valid: 0.9,
@@ -294,16 +294,17 @@ const EVAL_DEMO: Record<"dev" | "test", { samples: number; metrics: Record<strin
       fast_path_share: 0.81,
     },
   },
+  // Как в контрольном замере 31.10 в Docker: страница должна выглядеть так, как её увидит жюри.
   test: {
-    samples: 90,
+    samples: 300,
     metrics: {
-      top1_full_code: 0.86,
-      top1_any_valid: 0.88,
-      top1_okpd2: 0.93,
-      top3: 0.95,
-      attributes_accuracy: 0.91,
-      ece: 0.048,
-      fast_path_share: 0.79,
+      top1_full_code: 0.87,
+      top1_any_valid: 0.93,
+      top1_okpd2: 0.97,
+      top3: 0.93,
+      attributes_accuracy: 0.97,
+      ece: 0.06,
+      fast_path_share: 1,
     },
   },
 };

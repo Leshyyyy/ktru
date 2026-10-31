@@ -15,6 +15,7 @@ from backend.files.exceptions import (
     FileParsingError,
     FileTooLargeError,
     FileUnreadableError,
+    LimitExceededError,
     UnsupportedTypeError,
 )
 from backend.files.hash import compute_file_sha256
@@ -22,6 +23,16 @@ from backend.files.roles import suggest_roles
 from backend.files.schemas import ColumnInfo, FileInfo, Sheet
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
+# Больше строк parser.py не разберёт, поэтому read_file их и не читает: иначе файл на 50 МБ — десятки секунд и сотни
+# мегабайт памяти ради предпросмотра в 10 строк. Запас нужен на пустые и служебные строки над шапкой; точную проверку
+# делает parser.py при создании задачи.
+MAX_ROWS_IN_FILE = 5000
+_ROWS_SLACK = 50
+
+
+def _too_many_rows(sheet_name: Optional[str] = None) -> LimitExceededError:
+    where = f"На листе «{sheet_name}»" if sheet_name else "В файле"
+    return LimitExceededError(f"{where} больше {MAX_ROWS_IN_FILE} строк. Разбейте файл на части.")
 
 
 def _detect_csv_encoding_and_delimiter(file_path: Path) -> Tuple[str, str]:
@@ -182,10 +193,16 @@ def read_file(
         try:
             wb = CalamineWorkbook.from_path(str(file_path))
             for sheet_name in wb.sheet_names:
-                sheet_data = wb.get_sheet_by_name(sheet_name).to_python()
+                sheet = wb.get_sheet_by_name(sheet_name)
+                # Размер листа известен до to_python(): лишнее не читаем.
+                if sheet.total_height > MAX_ROWS_IN_FILE + _ROWS_SLACK:
+                    raise _too_many_rows(sheet_name)
+                sheet_data = sheet.to_python()
                 parsed_sheet = _extract_sheet_from_matrix(sheet_name, sheet_data, is_pdf=False)
                 if parsed_sheet:
                     sheets.append(parsed_sheet)
+        except FileParsingError:
+            raise  # LimitExceededError не должен превратиться в «ошибку чтения файла»
         except Exception as e:
             raise FileUnreadableError(f"Ошибка чтения Excel-файла: {e}") from e
 
@@ -197,11 +214,13 @@ def read_file(
                 reader = csv.reader(f, delimiter=delimiter)
                 for r in reader:
                     rows.append(r)
+                    if len(rows) > MAX_ROWS_IN_FILE + _ROWS_SLACK:
+                        raise _too_many_rows()
 
             parsed_sheet = _extract_sheet_from_matrix("Лист1", rows, is_pdf=False)
             if parsed_sheet:
                 sheets.append(parsed_sheet)
-        except FileUnreadableError:
+        except FileParsingError:
             raise
         except Exception as e:
             raise FileUnreadableError(f"Ошибка чтения CSV-файла: {e}") from e
