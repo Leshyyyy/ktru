@@ -65,6 +65,7 @@ import {
 import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
 import { ItemDrawer } from "../components/ItemDrawer";
 import { BAND, dateTime, duration, FLAG, pct, pctInt, plural } from "../lib/format";
+import { isReviewed, reviewedStatus } from "../lib/review";
 
 const PAGE_SIZE = 50;
 /** Ширина карточки позиции (ItemDrawer) — на широком экране страница отступает на неё, таблица не закрыта. */
@@ -311,6 +312,13 @@ function JobView({ job }: { job: Job }) {
               )}
             </Menu.Dropdown>
           </Menu>
+          {/* Открыто плиткой «Проверено»: API фильтрует по одному статусу, поэтому переключатель между двумя. */}
+          {isReviewed(status) &&
+            (["confirmed", "corrected"] as const).map((s) => (
+              <FilterChip key={s} active={status === s} onClick={() => setParam("status", status === s ? null : s)}>
+                {s === "confirmed" ? "Подтверждённые" : "Исправленные"} · {job.summary[s] ?? 0}
+              </FilterChip>
+            ))}
           {job.failed_items > 0 && (
             <FilterChip
               active={status === "failed"}
@@ -475,8 +483,8 @@ function Summary({
         />
       ))}
       <Tile
-        active={status === "confirmed" || status === "corrected"}
-        onClick={() => onStatus(status === "corrected" ? null : status === "confirmed" ? "corrected" : "confirmed")}
+        active={isReviewed(status)}
+        onClick={() => onStatus(isReviewed(status) ? null : reviewedStatus(s))}
         color="var(--k-cor)"
         label="Проверено"
         value={reviewed}
