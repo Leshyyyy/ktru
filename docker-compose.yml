@@ -1,4 +1,8 @@
 # AI-классификатор КТРУ. Запуск: docker compose up --build (CPU, без ключей LLM).
+# Интерфейс — http://localhost:8080 (он же проксирует /api/), API напрямую — http://localhost:8000/api/v1.
+# По умолчанию настоящий ML (PIPELINE=real): migrate при первом запуске скачивает полный каталог КТРУ на том
+# catalog, образ worker-ml содержит torch (CPU) и модель эмбеддингов. Не скачался каталог — работает заглушка,
+# причина видна в /api/v1/health. PIPELINE=stub — заглушка сразу, без каталога (для фронтенда и бэкенда).
 #
 # Все переменные и значения по умолчанию — в .env.example; свои значения кладите в .env.
 # Пароли по умолчанию — только для локального запуска: PostgreSQL и Redis сидят во внутренней сети
@@ -111,12 +115,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ktru_owner_local_only}
       APP_DB_USER: ${APP_DB_USER:-ktru_app}
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-ktru_app_local_only}
-      PIPELINE: ${PIPELINE:-stub}
-      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      PIPELINE: ${PIPELINE:-real}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-/data/catalog/catalog.jsonl}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - catalog:/data/catalog
     depends_on:
       postgres:
         condition: service_healthy
+    # public — скачать каталог КТРУ при первом запуске (Hugging Face, ревизия и sha256 закреплены).
+    networks: [internal, public]
 
   api:
     <<: *backend
@@ -132,16 +140,19 @@ services:
       - --no-access-log
     environment:
       <<: [*db-app-env, *redis-env]
-      PIPELINE: ${PIPELINE:-stub}
+      PIPELINE: ${PIPELINE:-real}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Без значения: берутся из .env или окружения, если заданы, иначе действуют умолчания из .env.example.
       API_DOCS:
       API_STATEMENT_TIMEOUT_MS:
       CORS_ORIGINS:
       MAX_FILE_MB:
+      UPLOAD_EXTENSIONS:
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
       CLASSIFY_MAX_ITEMS:
+      CLASSIFY_TIMEOUT_S:
+      CATALOG_IMPORT_MAX_MB:
       GREEN_THRESHOLD:
       YELLOW_THRESHOLD:
       EXTRACTOR:
@@ -186,8 +197,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MAX_ROWS:
       MAX_ITEMS_PER_JOB:
+      UPLOAD_TTL_HOURS:
     volumes:
-      - uploads:/data/uploads:ro
+      # Запись — для уборки файлов без задачи (io.cleanup_uploads).
+      - uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"io@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
@@ -204,13 +217,20 @@ services:
 
   worker-ml:
     <<: *backend
+    # Отдельный образ: torch (CPU) и модель эмбеддингов нужны только здесь, остальные сервисы остаются лёгкими.
+    image: ktru-backend-ml:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: ml
     command:
       - celery
       - -A
       - backend.tasks.ml_worker
       - worker
+      # classify — синхронный POST /classify: отдельная очередь, чтобы не ждать за всеми пачками большой задачи.
       - -Q
-      - ml
+      - classify,ml
       - -n
       - ml@%h
       - --concurrency
@@ -219,15 +239,18 @@ services:
       - --without-mingle
     environment:
       <<: [*db-app-env, *redis-env]
-      PIPELINE: ${PIPELINE:-stub}
+      PIPELINE: ${PIPELINE:-real}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-}
+      KTRU_CATALOG_PATH: ${KTRU_CATALOG_PATH:-/data/catalog/catalog.jsonl}
       HF_HOME: /data/models
       ML_HEARTBEAT_INTERVAL_S:
       ML_READY_TTL_S:
       ML_WORKER_INIT_TIMEOUT_S:
       STUB_DELAY_MS:
       STUB_DEGRADED:
+      # Статус позиции (processed / needs_review) ставит worker-ml по порогу green — тому же, что в /config.
+      GREEN_THRESHOLD:
+      YELLOW_THRESHOLD:
       # Переменные ML (docs/analytics/07-ml.md). Ключ LLM получает только этот сервис.
       EXTRACTOR:
       RERANKER:
@@ -236,12 +259,20 @@ services:
       LLM_MODEL:
       LLM_API_KEY:
       JEV_MODEL:
-      EMBEDDER_MODEL:
+      # Модель лежит в образе (стадия ml в backend/Dockerfile); «-» — выключить эмбеддинги.
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-/opt/models/multilingual-e5-small}
       EMBEDDING_DIM:
       CROSS_ENCODER_MODEL:
       CALIBRATOR_PATH:
+      # Кэши ML — на томе models: код в образе только для чтения.
+      EMBED_CACHE_DIR: /data/models/embeddings
+      LLM_CACHE_PATH: /data/models/llm_cache.jsonl
     volumes:
       - models:/data/models
+      - catalog:/data/catalog:ro
+    # Одна версия каталога с моделью категорий, torch и e5-small — 2,8 ГБ (замер Jove). При импорте (FR-8.1)
+    # в памяти две версии (CatalogVersions.KEEP = 2), отсюда 5 ГБ.
+    mem_limit: 5g
     healthcheck:
       test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping -d \"ml@$${HOSTNAME}\" --timeout 10"]
       interval: 30s
@@ -278,11 +309,38 @@ services:
       redis:
         condition: service_healthy
 
+  # Веб-интерфейс: nginx отдаёт собранный фронтенд и проксирует /api/ в api (frontend/nginx.conf).
+  # Адрес у интерфейса и API один, поэтому CORS не нужен. Базы и Redis не видит: только сеть public.
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # pid и временные файлы nginx-unprivileged лежат в /tmp.
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [public]
+    logging: *logging
+
 volumes:
   pgdata:
   redisdata:
   uploads:
   models:
+  catalog:
 
 networks:
   # Без выхода наружу: сюда подключены база и Redis.

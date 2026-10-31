@@ -1,0 +1,49 @@
+{
+  "name": "ktru-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:prism": "concurrently -k -n mock,web \"prism mock ../contracts/openapi.yaml -p 4010\" \"vite --mode prism\"",
+    "build": "tsc -b && vite build",
+    "build:demo": "tsc -b && vite build --mode demo --base ./ --outDir dist-demo",
+    "preview": "vite preview",
+    "gen:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts",
+    "typecheck": "tsc -b",
+    "test": "node --test test/*.test.ts",
+    "dev:backend": "vite --mode backend"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "5.2.8",
+    "@fontsource-variable/onest": "5.2.8",
+    "@mantine/core": "8.3.18",
+    "@mantine/dropzone": "8.3.18",
+    "@mantine/hooks": "8.3.18",
+    "@mantine/modals": "8.3.18",
+    "@mantine/notifications": "8.3.18",
+    "@tabler/icons-react": "3.35.0",
+    "@tanstack/react-query": "5.90.2",
+    "openapi-fetch": "0.14.0",
+    "react": "19.1.10",
+    "react-dom": "19.1.10",
+    "react-router": "7.18.4",
+    "read-excel-file": "5.8.0"
+  },
+  "devDependencies": {
+    "@stoplight/prism-cli": "5.16.0",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.2.0",
+    "concurrently": "9.2.5",
+    "openapi-typescript": "7.9.1",
+    "postcss": "8.5.31",
+    "postcss-preset-mantine": "1.18.0",
+    "postcss-simple-vars": "7.0.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

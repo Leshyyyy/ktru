@@ -81,7 +81,7 @@ class ParsedRow(BaseModel):
     """Разобранная строка спецификации для Celery-задачи parse_file."""
 
     row_index: int = Field(ge=0, description="Порядковый номер строки в файле (с 0, без заголовка)")
-    raw_text: str = Field(description="Склейка name + description + characteristics через пробел")
+    raw_text: str = Field(description="Склейка name + description + characteristics через «; »")
     raw_row: List[str] = Field(description="Исходные строковые значения всех колонок строки")
 
 

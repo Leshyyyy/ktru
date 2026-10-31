@@ -1,4 +1,5 @@
-"""Разовый контейнер migrate: миграции, роль приложения в БД и стартовый каталог. `python -m backend.migrate`.
+"""Разовый контейнер migrate: миграции, роль приложения в БД, стартовый каталог и разметка для оценки качества.
+`python -m backend.migrate`.
 
 Остальные сервисы compose ждут его успешного завершения. Повторный запуск ничего не ломает и не дублирует.
 """
@@ -17,10 +18,18 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.core.catalog import CatalogImportError, file_sha256, import_catalog_file
+from backend.core.catalog import (
+    MIGRATE_SOURCE,
+    CatalogImportError,
+    download_catalog,
+    file_sha256,
+    import_catalog_file,
+)
 from backend.core.db import make_engine
 from backend.core.logs import setup_logging
+from backend.core.ml import catalog_fallback
 from backend.core.models import CatalogVersion
+from backend.core.quality import seed_eval_samples
 from backend.core.settings import ConfigError, Settings, get_settings
 
 log = logging.getLogger("backend.migrate")
@@ -28,6 +37,10 @@ log = logging.getLogger("backend.migrate")
 ALEMBIC_INI = Path(__file__).resolve().parent / "alembic.ini"
 # Ключ pg_advisory_lock: два migrate одновременно (например, при --scale) не столкнутся.
 _LOCK_KEY = 5_250_026_001
+# Скачивание каталога: столько попыток с такой паузой, прежде чем откатиться на заглушку. migrate запускается один раз
+# (restart: "no"), поэтому короткий сбой сети у проверяющего иначе оставил бы заглушку до ручного перезапуска.
+CATALOG_DOWNLOAD_ATTEMPTS = 3
+CATALOG_DOWNLOAD_PAUSE_S = 30.0
 
 
 def main(settings: Settings | None = None) -> int:
@@ -41,7 +54,8 @@ def main(settings: Settings | None = None) -> int:
             try:
                 upgrade(engine)
                 ensure_app_role(engine, settings)
-                seed_catalog(engine, settings)
+                seed_catalog(engine, prepare_catalog(settings))
+                seed_eval_samples(engine, settings.eval_samples_dir)
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY})
     except (ConfigError, CatalogImportError) as e:
@@ -114,6 +128,32 @@ def ensure_app_role(engine: Engine, settings: Settings) -> None:
     log.info("Роль приложения в БД настроена", extra={"role": role, "action": verb.lower()})
 
 
+def prepare_catalog(settings: Settings) -> Settings:
+    """PIPELINE=real: полного каталога ещё нет на томе — скачать его, до CATALOG_DOWNLOAD_ATTEMPTS попыток. Не вышло
+    (нет сети, Hugging Face недоступен, не совпал sha256) — откат на заглушку: система запускается, а /health
+    объясняет, почему коды 99.99.*.
+    """
+    if settings.pipeline != "real":
+        return settings
+    if settings.ktru_catalog_path is None:
+        raise ConfigError("PIPELINE=real: задайте KTRU_CATALOG_PATH — тот же файл читает worker-ml")
+    for attempt in range(1, CATALOG_DOWNLOAD_ATTEMPTS + 1):
+        if settings.ktru_catalog_path.is_file():
+            break
+        if attempt > 1:
+            log.warning(
+                "Каталог КТРУ не скачался, повторю",
+                extra={"attempt": attempt, "attempts": CATALOG_DOWNLOAD_ATTEMPTS, "pause_s": CATALOG_DOWNLOAD_PAUSE_S},
+            )
+            time.sleep(CATALOG_DOWNLOAD_PAUSE_S)
+        log.info("Скачиваю каталог КТРУ", extra={"path": str(settings.ktru_catalog_path)})
+        download_catalog(settings.ktru_catalog_path)
+    if reason := catalog_fallback(settings):
+        log.error(reason)
+        return settings.model_copy(update={"pipeline": "stub"})
+    return settings
+
+
 def seed_catalog(engine: Engine, settings: Settings) -> None:
     """Стартовый каталог: фикстура для PIPELINE=stub, иначе файл KTRU_CATALOG_PATH (его же читает worker-ml).
 
@@ -132,7 +172,7 @@ def seed_catalog(engine: Engine, settings: Settings) -> None:
         if existing is not None:
             log.info("Каталог уже загружен", extra={"version_id": str(existing), "file": path.name})
             return
-        version = import_catalog_file(session, path, source=f"migrate:{path.name}", note=note)
+        version = import_catalog_file(session, path, source=f"{MIGRATE_SOURCE}{path.name}", note=note)
         log.info(
             "Каталог загружен",
             extra={"version_id": str(version.id), "items": version.items_count, "file": path.name},

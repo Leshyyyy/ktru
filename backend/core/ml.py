@@ -1,6 +1,7 @@
 """Связь с ML: выбор конвейера, режим работы для /config и проверка ответа по контракту ml_contracts.py.
 
-Из ml/ бэкенд берёт только ml.pipeline.get_pipeline() (правило ml/CLAUDE.md).
+Из ml/ бэкенд берёт только ml.pipeline.get_pipeline() (правило ml/CLAUDE.md) и ml.evaluate.evaluate() для
+POST /quality/run.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import math
 import os
 from collections.abc import Container, Mapping, Sequence
 from itertools import pairwise
+from typing import Any
 
 from contracts.ml_contracts import ClassificationResult, Pipeline, RawItem
 
@@ -27,6 +29,23 @@ _RERANKERS = ("none", "cross_encoder", "llm")
 _DEVICES = ("cpu", "cuda")
 
 
+CATALOG_FALLBACK = (
+    "Каталог КТРУ не скачался — работает демонстрационная заглушка с кодами 99.99.*. "
+    "Проверьте доступ к huggingface.co и запустите заново: docker compose up."
+)
+
+
+def catalog_fallback(settings: Settings) -> str | None:
+    """PIPELINE=real, а файла каталога нет (migrate не смог его скачать) → причина отката на заглушку.
+
+    migrate и worker-ml решают по одному признаку — есть ли файл KTRU_CATALOG_PATH, — поэтому оба откатываются
+    вместе: migrate загружает каталог-фикстуру, worker-ml отвечает её кодами.
+    """
+    if settings.pipeline != "real" or settings.ktru_catalog_path is None:
+        return None
+    return None if settings.ktru_catalog_path.is_file() else CATALOG_FALLBACK
+
+
 def load_pipeline(settings: Settings) -> Pipeline:
     """Загружает модели. Вызывать один раз на процесс воркера: это может занять минуты."""
     # Импорт внутри функции: ml.pipeline тянет numpy и scikit-learn, а нужен только worker-ml.
@@ -39,13 +58,36 @@ def load_pipeline(settings: Settings) -> Pipeline:
     return get_pipeline()
 
 
+def evaluate_quality(samples: list[dict[str, Any]], pipeline: Pipeline, catalog_version_id: str) -> dict[str, Any]:
+    """Метрики раздела 9 на размеченных строках — ml.evaluate.evaluate() на конвейере воркера (подтверждённые
+    примеры он выключает сам). Импорт внутри: ML нужен только worker-ml.
+    """
+    from ml.evaluate import evaluate
+
+    return evaluate(samples, pipeline, catalog_version_id=catalog_version_id)
+
+
+def pipeline_mode(pipeline: object | None, settings: Settings) -> dict[str, object]:
+    """Режим для GET /config, который worker-ml кладёт в heartbeat. Конвейер, который умеет сообщить режим сам
+    (describe_mode() — необязательный метод, не часть контракта), знает его точнее: умолчания не дублируются.
+    """
+    describe = getattr(pipeline, "describe_mode", None)
+    if callable(describe):
+        try:
+            return dict(describe())
+        except Exception:
+            log.exception("Pipeline.describe_mode() упал, режим — по переменным окружения")
+    return describe_mode(settings)
+
+
 def describe_mode(settings: Settings, environ: Mapping[str, str] = os.environ) -> dict[str, object]:
-    """Режим для GET /config. Переменные и умолчания — из docs/analytics/07-ml.md; llm_enabled считается так же,
-    как в ml/config.py. Считает worker-ml (у него есть ключ LLM), API получает результат через Redis.
+    """Режим по переменным окружения — когда конвейер не сообщает его сам. Умолчания и llm_enabled — как
+    в ml/config.py (EXTRACTOR=rules, RERANKER=none). API берёт режим у worker-ml через Redis: только у него
+    есть ключ LLM; сам считает его, лишь пока воркера нет.
     """
     if settings.pipeline == "stub":
         return {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False}
-    reranker = _choice(environ, "RERANKER", _RERANKERS, "cross_encoder")
+    reranker = _choice(environ, "RERANKER", _RERANKERS, "none")
     has_key = bool(environ.get("LLM_API_KEY", "").strip())
     has_url = bool(environ.get("LLM_BASE_URL", "").strip())
     llm_enabled = has_key and (has_url or reranker == "llm")
@@ -54,7 +96,7 @@ def describe_mode(settings: Settings, environ: Mapping[str, str] = os.environ) -
     if (reranker == "llm" and not has_key) or (reranker == "cross_encoder" and not _installed("sentence_transformers")):
         reranker = "none"
     return {
-        "extractor": _choice(environ, "EXTRACTOR", _EXTRACTORS, "hybrid"),
+        "extractor": _choice(environ, "EXTRACTOR", _EXTRACTORS, "rules"),
         "reranker": reranker,
         "device": _choice(environ, "DEVICE", _DEVICES, "cpu"),
         "llm_enabled": llm_enabled,

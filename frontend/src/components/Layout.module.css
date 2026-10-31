@@ -1,0 +1,145 @@
+.header {
+  background: var(--k-surface);
+  border-bottom: 1px solid var(--k-line);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+  flex: none;
+}
+
+/* Вкладки с подчёркиванием, как в макете. */
+.nav {
+  display: flex;
+  gap: 4px;
+  height: 100%;
+
+  @media (max-width: $mantine-breakpoint-sm) {
+    display: none;
+  }
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-weight: 500;
+  color: var(--k-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--k-ink);
+  }
+
+  &[aria-current="page"] {
+    color: var(--k-ink);
+    border-bottom-color: var(--k-primary);
+  }
+}
+
+.mobileLink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--mantine-radius-md);
+  font-weight: 500;
+  color: var(--k-muted);
+  text-decoration: none;
+
+  &:hover {
+    background: var(--k-surface-2);
+    color: var(--k-ink);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+  &[aria-current="page"] {
+    background: var(--k-primary-soft);
+    color: var(--k-primary-deep);
+  }
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--k-muted);
+  background: var(--k-surface);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--k-faint);
+
+  &[data-state="ok"] {
+    background: var(--k-hi);
+  }
+  &[data-state="wait"],
+  &[data-state="stub"] {
+    background: var(--k-mid);
+  }
+  &[data-state="error"] {
+    background: var(--k-lo);
+  }
+}
+
+.page {
+  padding: 28px 40px;
+  max-width: 1440px;
+  margin: 0 auto;
+
+  @media (max-width: $mantine-breakpoint-sm) {
+    padding: 20px 16px;
+  }
+}
+
+.demo {
+  background: var(--k-mode-bg);
+  border-bottom: 1px solid var(--k-mode-line);
+  color: var(--k-mode-ink);
+  padding: 8px 16px;
+}
+
+/* Пилюля «О системе» — кнопка: зона нажатия не ниже 32 px, отклик на наведение и нажатие. */
+.pillBtn {
+  min-height: 32px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--k-line-strong);
+    color: var(--k-ink);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+}
+
+.about {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+
+  & dt {
+    color: var(--k-muted);
+  }
+  & dd {
+    margin: 0;
+  }
+}

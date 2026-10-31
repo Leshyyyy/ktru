@@ -1,13 +1,18 @@
-"""Зависимости FastAPI. Состояние приложения (настройки, движок, Redis) создаётся в lifespan и лежит в app.state."""
+"""Зависимости FastAPI. Состояние приложения (настройки, движок, Redis, очередь) создаётся в lifespan
+и лежит в app.state.
+"""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import Request
 from redis.exceptions import RedisError
+from sqlalchemy.orm import Session
 
+from backend.core.queue import TaskQueue
 from backend.core.readiness import read_status
 from backend.core.settings import Settings
 
@@ -18,6 +23,16 @@ log = logging.getLogger(__name__)
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_db(request: Request) -> Iterator[Session]:
+    """Сессия на запрос. Пишущие маршруты сами вызывают commit; без него всё откатывается при закрытии."""
+    with Session(request.app.state.engine) as session:
+        yield session
+
+
+def get_queue(request: Request) -> TaskQueue:
+    return request.app.state.queue
 
 
 def get_health_checker(request: Request) -> HealthChecker:

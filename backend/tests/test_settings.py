@@ -12,7 +12,7 @@ from backend.core.settings import FIXTURE_CATALOG, REPO_ROOT, ConfigError, Setti
 def test_defaults_match_contract_example() -> None:
     s = Settings()
     assert (s.max_file_mb, s.max_rows, s.max_items_per_job, s.classify_max_items) == (50, 5000, 1000, 20)
-    assert (s.green_threshold, s.yellow_threshold) == (0.85, 0.5)
+    assert (s.green_threshold, s.yellow_threshold) == (0.70, 0.5)  # зелёный порог — по замеру ML, не из примера
     assert s.pipeline == "stub"
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from contracts.ml_contracts import ExtractedAttributes, RawItem
@@ -25,8 +26,16 @@ BRANDS = {
         "SFM", "Apexmed", "Medline", "Polymed", "Romed", "Omron", "AND", "Microlife", "B.Well", "Little Doctor",
         "Mindray", "Philips", "Dräger", "Draeger", "Covidien", "Terumo", "Nipro", "Vitrum", "Bormioli", "Chairman",
         "Бюрократ", "Brabix", "Helmi", "Riva", "Metta", "Samurai",
+        # Многословные и кириллические марки: ищутся по тексту целиком, длинные — раньше коротких.
+        "Erich Krause", "Bruno Visconti", "Double A", "Little Doctor", "IQ Premium", "IQ Allround", "IQ Economy",
+        "IQ Color", "Ballet Classic", "Ballet Universal", "Ballet Premier", "Ballet Brilliant", "Снегурочка",
+        "Комус", "Офисмаг", "Гознак", "Альт", "Каляка-Маляка", "Луч", "Гамма", "Медполимер",
     )
 }
+_BRAND_RE = re.compile(
+    r"(?<![\w])(" + "|".join(re.escape(b) for b in sorted(BRANDS, key=len, reverse=True)) + r")(?![\w])",
+    re.I,
+)
 
 # Латинские слова, которые не являются брендом: интерфейсы, стандарты, технологии.
 TECH_WORDS = {
@@ -38,10 +47,34 @@ TECH_WORDS = {
     "amd", "core", "ryzen", "celeron", "pentium", "athlon", "xeon", "i3", "i5", "i7", "i9",
 }
 TECH_WORDS -= {"intel", "amd"}  # бывают брендами системных блоков, но не моделей ноутбука — решает контекст ниже
+# Слова, которые не могут быть маркой, но бывают частью модели («iRU Office 313», «IdeaPad Pro 5»):
+# аббревиатуры, стандарты, материалы, размеры, цвета, серии. В реальных названиях стоят там же, где марки.
+NOT_BRAND_WORDS = TECH_WORDS | {
+    "spi", "fifa", "pdf", "abs", "pp", "pe", "tft", "ip", "sd", "microsd", "cmos", "ccd", "dc", "ac", "uv", "eva", "pu",
+    "wan", "sas", "pci", "pcie", "api", "eac", "din", "en", "ral", "gsm", "sms", "fm", "am", "tv", "mp3", "usb-c",
+    "xl", "xxl", "xs", "xxs", "s", "m", "l", "rj", "led-", "smd", "ups", "atx", "itx", "rohs", "ul", "ip54", "ip65",
+    "ip67", "ip68", "gost", "red", "black", "white", "silver", "yellow", "blue", "green", "grey", "gray", "gold",
+    "pink", "orange", "brown", "violet", "purple", "beige", "dark", "light", "super", "maxi", "mini", "max",
+    "pro", "plus", "eco", "premium", "classic", "standard", "comfort", "lite", "air", "smart", "home", "office",
+    "sport", "kids", "new", "original", "extra", "ultra", "power", "basic", "set", "kit", "type", "size", "art",
+    "no", "nr", "ref", "model", "series", "edition", "version", "fi", "f", "x2", "x4", "ii", "iii", "iv", "vi",
+    "vii", "viii", "ix", "xi", "xii", "ethernet", "gigabit", "display", "port", "wireless", "hdr", "dlp", "lan",
+}
+# Кириллические аббревиатуры, которые пишут капсом, но это не марки.
+CYR_ABBR = {
+    "гост", "ту", "ивд", "пвх", "мдф", "дсп", "лдсп", "хдф", "рф", "ссср", "окпд", "ктру", "сте", "ип", "ооо",
+    "ао", "пао", "зао", "оао", "нао", "сиз", "мфу", "ибп", "озу", "пзу", "жк", "лед", "вт", "кв", "ква", "ес",
+    "снип", "сп", "сан", "пин", "ст", "мм", "см", "кг", "шт", "уп", "пэт", "пнд", "пвд", "пп", "пэ", "абс", "ппу",
+    "вгс", "нгс", "эпдм", "тпр", "тпэ", "эва", "кгу", "ивл", "экг", "узи", "мрт", "кт", "пцр", "днк", "рнк",
+}
 
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+\-./]*|\d+[A-Za-z][A-Za-z0-9\-]*")
+# Слово-кандидат в марку: только буквы (и дефис/точка/& внутри), без цифр — цифры бывают у моделей.
+_LATIN_WORD = re.compile(r"(?<![\w\-./])[A-Za-z][A-Za-z&]*(?:[\-.][A-Za-z]+)*(?![\w\-/])")
+# Кириллица капсом: одно-три слова подряд, от трёх букв.
+_CYR_CAPS = re.compile(r"(?<![\wА-ЯЁа-яё])[А-ЯЁ]{3,}(?:[\s\-][А-ЯЁ]{2,}){0,2}(?![А-ЯЁа-яё])")
 _COMPAT = re.compile(r"(совместим\w*\s+с|для\s+(?:принтер\w*|мфу|ноутбук\w*|аппарат\w*|картридж\w*|техники\s+[A-Z]))\s*", re.I)
-_NAME_STOP = re.compile(r"[,;:]|\s[-–—]\s")
+_NAME_STOP = re.compile(r"[,;:]|\.\s|\s[-–—]\s")
 
 
 def _segments_excluding_compat(text: str) -> list[tuple[int, int]]:
@@ -75,40 +108,95 @@ def _extract_name(source: str) -> str:
         return head.strip(" -–—.")
     words = []
     for w in head.split():
-        if re.search(r"[A-Za-z0-9\"№]", w):
+        # «USB-ресивер» — часть наименования (есть кириллица), «A4Tech», «15.6"», «M404» — уже нет.
+        if re.search(r"[A-Za-z0-9\"№]", w) and not re.search(r"[А-Яа-яЁё]", w):
             break
         words.append(w)
     name = " ".join(words).strip(" -–—.")
     return name or head.strip()[:80]
 
 
-def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, float]:
-    spans = _segments_excluding_compat(text)
-    tokens = [(m.group(0), m.start(), m.end()) for m in _LATIN_TOKEN.finditer(text)]
-    for i, (tok, start, end) in enumerate(tokens):
+# Словарь марок из карточек СТЕ (ml/build_brands.py): ~30 тыс. написаний, ищутся по словам текста.
+_LEXICON_PATH = Path(__file__).resolve().parent / "models" / "brands.txt"
+_LEXICON: Optional[dict[str, str]] = None
+_LEX_MAX_WORDS = 4
+_WORD = re.compile(r"[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9&.+'\-]*")
+
+
+def _lexicon() -> dict[str, str]:
+    global _LEXICON
+    if _LEXICON is None:
+        _LEXICON = {}
+        if _LEXICON_PATH.exists():
+            for line in _LEXICON_PATH.read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#"):
+                    brand = line.split("	", 1)[0]
+                    _LEXICON.setdefault(brand.lower(), brand)
+    return _LEXICON
+
+
+def _lexicon_brand(text: str, spans: list[tuple[int, int]]) -> Optional[tuple[int, int, int, str]]:
+    """Самая ранняя марка из словаря СТЕ: (начало, -длина, конец, написание из текста)."""
+    lex = _lexicon()
+    if not lex:
+        return None
+    words = [(m.start(), m.end()) for m in _WORD.finditer(text)]
+    for i, (start, _) in enumerate(words):
         if _in_spans(start, spans):
             continue
-        key = tok.lower().strip(".")
-        known = key in BRANDS
-        # Неизвестный бренд: слово с заглавной буквы, только буквы, за ним идёт модель.
-        # Неизвестный бренд: слово с заглавной буквы (не аббревиатура вроде SPI), за ним модель с цифрами.
-        guessed = (
-            not known
-            and key not in TECH_WORDS
-            and tok[:1].isupper()
-            and tok.isalpha()
-            and len(tok) >= 3
-            and not (tok.isupper() and len(tok) <= 4)
-            and i + 1 < len(tokens)
-            and re.search(r"\d", tokens[i + 1][0]) is not None
-            and _adjacent(text, end, tokens[i + 1][1])
-        )
-        if not (known or guessed):
-            continue
+        for n in range(min(_LEX_MAX_WORDS, len(words) - i), 0, -1):
+            end = words[i + n - 1][1]
+            piece = text[start:end]
+            key = " ".join(piece.lower().split()).strip(".")
+            if key in lex and key not in NOT_BRAND_WORDS:
+                # Одно кириллическое слово строчными («ресурс», «гамма») — обычное слово, а не марка.
+                if n == 1 and re.match(r"[а-яё]", piece):
+                    continue
+                return start, -(end - start), start + len(piece.rstrip(".")), piece.rstrip(".")
+    return None
+
+
+def _find_brand_model(text: str) -> tuple[Optional[str], Optional[str], float, float, Optional[int]]:
+    """→ (бренд, модель, уверенность бренда, уверенность модели, позиция бренда в тексте)."""
+    spans = _segments_excluding_compat(text)
+    found = []  # (начало, -длина, конец, написание)
+    for m in _BRAND_RE.finditer(text):
+        if not _in_spans(m.start(), spans):
+            found.append((m.start(), -(m.end() - m.start()), m.end(), BRANDS[m.group(1).lower()]))
+            break
+    if (hit := _lexicon_brand(text, spans)) is not None:
+        found.append(hit)
+    if found:
+        start, _, end, brand = min(found)  # самая ранняя марка, при равенстве — длинная
         model = _model_after(text[end:])
-        brand = BRANDS.get(key, tok)
-        return brand, model, (0.95 if known else 0.6), (0.85 if model and _looks_like_model(model) else 0.5)
-    return None, None, 0.0, 0.0
+        conf_model = 0.85 if model and _looks_like_model(model) else 0.5
+        return brand, model, 0.95, conf_model, start
+    # Марки нет в словаре — ищем самое раннее «марочное» слово: латиница с заглавной или капсом
+    # (Rommelsbacher, REXANT, AvtoPoryadok), либо кириллица капсом (ПРАКТИК, МОНЕТНЫЙ ДВОР).
+    candidates = []
+    for m in _LATIN_WORD.finditer(text):
+        tok = m.group(0)
+        if (_in_spans(m.start(), spans) or tok.lower().strip(".") in NOT_BRAND_WORDS or len(tok) < 2
+                or not (tok[:1].isupper() or tok.isupper())):
+            continue
+        candidates.append((m.start(), m.end(), tok, 0.6))
+        break
+    letters = [c for c in text if c.isalpha()]
+    shouting = letters and sum(c.isupper() for c in letters) / len(letters) > 0.6  # весь текст капсом
+    for m in ([] if shouting else _CYR_CAPS.finditer(text)):
+        found = m.group(0).strip()
+        first = found.split()[0]
+        # Одно короткое слово капсом (СМЛ, АСФ, ИОЛ) — почти всегда аббревиатура, а не марка.
+        if (_in_spans(m.start(), spans) or first.lower() in CYR_ABBR or (" " not in found and len(found) <= 4)
+                or text[max(0, m.start() - 1):m.start()] == "("):
+            continue
+        candidates.append((m.start(), m.end(), found, 0.5))
+        break
+    if candidates:
+        start, end, tok, conf = min(candidates)
+        model = _model_after(text[end:])
+        return tok, model, conf, (0.85 if model and _looks_like_model(model) else 0.5), start
+    return None, None, 0.0, 0.0, None
 
 
 _MODEL_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+\-./]*$")
@@ -117,9 +205,10 @@ _MODEL_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+\-./]*$")
 def _model_after(rest: str) -> Optional[str]:
     """Модель — латинские и цифровые слова сразу после бренда до запятой: «IdeaPad 3 15IAU7», «M6700DW».
 
-    Голое число берём, только если за ним снова латиница: «IdeaPad 3 15IAU7» — да, «Kingston 64 ГБ» — нет.
+    Голое число берём, если за ним снова латиница («IdeaPad 3 15IAU7») или оно последнее («Office 313»),
+    но не перед единицей («Kingston 64 ГБ»).
     """
-    words = re.split(r"[,;(]", rest, 1)[0].split()
+    words = re.split(r"[,;(]|\.\s", rest, 1)[0].split()
     parts: list[str] = []
     for j, w in enumerate(words):
         w = w.rstrip(".")
@@ -127,7 +216,10 @@ def _model_after(rest: str) -> Optional[str]:
             break
         if w.isdigit():
             nxt = words[j + 1] if j + 1 < len(words) else ""
-            if not (_MODEL_TOKEN.match(nxt) and re.search(r"[A-Za-z]", nxt) and nxt.lower() not in TECH_WORDS):
+            last = j == len(words) - 1
+            # «Office 313», «IdeaCentre 3» — число в конце модели; «Kingston 64 ГБ» — уже характеристика.
+            if not ((last and parts) or (_MODEL_TOKEN.match(nxt) and re.search(r"[A-Za-z]", nxt)
+                                         and nxt.lower() not in TECH_WORDS)):
                 break
         parts.append(w)
     return " ".join(parts) or None
@@ -143,11 +235,13 @@ def _looks_like_model(tok: str) -> bool:
 
 
 _KV = re.compile(r"([А-Яа-яЁё][^:;,]{1,60}?)\s*:\s*([^;,]+)")
+# Пары через «;» (как в спецификациях и карточках СТЕ): запятая — часть значения («35,5х16 см», «Пластик, резина»).
+_KV_SEMI = re.compile(r"([А-Яа-яЁё][^:;]{1,120}?)\s*:\s*([^;]+)")  # в СТЕ названия бывают по 80+ символов
 
 
 def _characteristics(text: str) -> dict[str, str]:
     out = {}
-    for m in _KV.finditer(text):
+    for m in (_KV_SEMI if ";" in text else _KV).finditer(text):
         key = m.group(1).strip()
         if len(out) < 30 and key.lower() not in ("наименование", "товар"):
             out[key] = m.group(2).strip()
@@ -171,9 +265,12 @@ class RulesExtractor:
 
     def extract_one(self, item: RawItem) -> ExtractedAttributes:
         text = " ".join(item.text.replace(" ", " ").replace("”", '"').replace("“", '"').split())
+        brand, model, brand_conf, model_conf, brand_at = _find_brand_model(text)
         name_src = item.columns.get("name") or text
+        if not item.columns.get("name") and brand_at:
+            # «Бумага для офисной техники Снегурочка …»: наименование кончается там, где начинается марка.
+            name_src = text[:brand_at]
         name = _extract_name(name_src)
-        brand, model, brand_conf, model_conf = _find_brand_model(text)
         name_conf = 0.9 if item.columns.get("name") else (0.8 if len(name) >= 3 else 0.3)
         return ExtractedAttributes(
             name=name,
@@ -181,7 +278,10 @@ class RulesExtractor:
             model=model,
             quantity=_quantity(item.columns.get("quantity")),
             unit=(item.columns.get("unit") or None),
-            characteristics=_characteristics(text),
+            # Колонка характеристик отдельно от наименования: бэкенд склеивает колонки через пробел, и пара
+            # «Вид игрушки: …» иначе получала бы в ключ хвост наименования.
+            characteristics=_characteristics(
+                " ; ".join(v for k in ("description", "characteristics") if (v := item.columns.get(k))) or text),
             method="rules",
             field_confidence={"name": name_conf, "brand": brand_conf, "model": model_conf},
         )

@@ -1,0 +1,27 @@
+/* Тост из макета: тёмная плашка снизу по центру, «Отменить» лаймовым. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 400;
+  min-width: 280px;
+  padding: 12px 16px 8px;
+  border-radius: 10px;
+  background: var(--k-ink);
+  color: var(--k-on-dark);
+  box-shadow: 0 10px 30px var(--k-shadow);
+}
+
+.undo {
+  color: var(--k-lime);
+  font-weight: 600;
+  font-size: 14px;
+
+  &:hover {
+    text-decoration: underline;
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+}

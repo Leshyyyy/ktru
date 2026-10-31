@@ -191,6 +191,7 @@ def parse_rows(
             )
 
         # Сборка raw_text: склейка непустых значений колонок name, description, characteristics слева направо
+        # через «; » — так ML (и человек в таблице) видит границу между колонками: «Ноутбук; 15.6"; Core i5»
         text_parts = []
         for c_idx in text_col_indices:
             if c_idx < len(cleaned_cells):
@@ -198,7 +199,7 @@ def parse_rows(
                 if val:
                     text_parts.append(val)
 
-        raw_text = " ".join(text_parts).strip()
+        raw_text = "; ".join(text_parts).strip()
 
         # Если даже после объединения текст пустой — пропускаем такую позицию
         if not raw_text:

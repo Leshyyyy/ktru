@@ -11,11 +11,13 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.core.db import api_engine
 from backend.core.logs import setup_logging
+from backend.core.queue import CeleryQueue
 from backend.core.settings import Settings, get_settings
+from backend.tasks.celery_app import create_celery
 
 from .errors import install_error_handlers
 from .middleware import REQUEST_ID_HEADER, BodySizeLimitMiddleware, RequestContextMiddleware
-from .routes import system
+from .routes import catalog, classify, export, files, items, jobs, quality, system
 
 API_PREFIX = "/api/v1"
 # Запас сверх лимита файла на служебные части multipart. Точный размер файла проверяет POST /files.
@@ -30,9 +32,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = Redis.from_url(
         settings.redis_url(), socket_timeout=1.5, socket_connect_timeout=1.5, health_check_interval=30
     )
+    # Только постановка задач: API задачи не выполняет, к брокеру подключается при первой отправке.
+    celery = create_celery(settings)
+    app.state.queue = CeleryQueue(celery)
     try:
         yield
     finally:
+        celery.close()
         app.state.redis.close()
         app.state.engine.dispose()
 
@@ -51,13 +57,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     install_error_handlers(app, max_file_mb=settings.max_file_mb)
-    app.include_router(system.router, prefix=API_PREFIX)
+    for module in (files, jobs, export, items, classify, catalog, quality, system):
+        app.include_router(module.router, prefix=API_PREFIX)
 
     # add_middleware ставит новый слой снаружи: порядок от внешнего — CORS, контекст запроса, лимит тела.
     app.add_middleware(
         BodySizeLimitMiddleware,
-        max_bytes=settings.max_file_mb * 1024 * 1024 + _MULTIPART_OVERHEAD,
         max_file_mb=settings.max_file_mb,
+        overhead_bytes=_MULTIPART_OVERHEAD,
+        path_limits={f"{API_PREFIX}/catalog/import": settings.catalog_import_max_mb},
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(

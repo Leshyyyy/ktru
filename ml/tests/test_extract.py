@@ -32,3 +32,37 @@ def test_name_with_lowercase_clarification():
 def test_quantity_and_unit_from_columns():
     a = _x("Бумага офисная А4", name="Бумага офисная А4", quantity="1 200", unit="пач")
     assert a.quantity == 1200 and a.unit == "пач" and a.field_confidence["name"] >= 0.9
+
+
+def test_multiword_and_cyrillic_brands():
+    a = _x("Ручка канцелярская Erich Krause. вид: Шариковая; ручка автоматическая: да")
+    assert (a.name, a.brand, a.model) == ("Ручка канцелярская", "Erich Krause", None)
+    b = _x("Бумага для офисной техники Снегурочка. формат: А4")
+    assert (b.name, b.brand) == ("Бумага для офисной техники", "Снегурочка")
+
+
+def test_trailing_number_in_model_and_latin_in_name():
+    assert _x("Системный блок iRU Office 313. объем оперативной памяти: не менее 8 ГБ").model == "Office 313"
+    a = _x("USB-ресивер для беспроводной связи A4Tech Unifying, дальность действия не менее 10 м")
+    assert (a.name, a.brand, a.model) == ("USB-ресивер для беспроводной связи", "A4Tech", "Unifying")
+
+
+def test_characteristics_from_column_with_commas_in_values():
+    from contracts.ml_contracts import RawItem
+    from ml.extract import RulesExtractor
+
+    chars = "Вид игрушки: Трактор с грейдером; Габаритные размеры: 35,5х16х16 см; Вид материала: Пластик, резина"
+    item = RawItem(item_id="1", text="Трактор с грейдером НОРД " + chars,
+                   columns={"name": "Трактор с грейдером НОРД", "characteristics": chars})
+    assert RulesExtractor().extract_one(item).characteristics == {
+        "Вид игрушки": "Трактор с грейдером", "Габаритные размеры": "35,5х16х16 см", "Вид материала": "Пластик, резина"}
+
+
+def test_long_characteristic_names_are_not_cut():
+    from contracts.ml_contracts import RawItem
+    from ml.extract import RulesExtractor
+
+    chars = "Виды одежды (включая форменную), головных уборов, одежды специальной: Одежда для взрослых; Цвет: Черный"
+    item = RawItem(item_id="1", text="Толстовка " + chars, columns={"name": "Толстовка", "characteristics": chars})
+    got = RulesExtractor().extract_one(item).characteristics
+    assert got["Виды одежды (включая форменную), головных уборов, одежды специальной"] == "Одежда для взрослых"

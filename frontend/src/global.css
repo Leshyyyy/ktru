@@ -1,0 +1,181 @@
+/* Hallmark · checked: 2026-10-29 · genre: modern-minimal (inferred)
+ * surface: review table with summary tiles, filter chips and an item card beside it
+ * floor: 0 FAIL · fixed: 19, 40, 48, 63, 67, 73, 24b, 26b, 39b (upload link), 75, F19, F24
+ * built: the project · redesign: polish · v2.0.0 */
+/* Hallmark · waive 39b · the five summary tiles are filter cards with a 24px count over a label · summary tiles above the review table are cards, their height comes from the count */
+/* Hallmark · dismissed F25 · the review table targets desktops from 1280px; on a phone the item card works on its own */
+/* Hallmark · dropped 16gb, 50726.20.11.110-00000165, 146% · beside the open item card the review table shows the extracted name, brand and model; the full item text stays in the card */
+/* Hallmark · dropped #mantine-u5rcjkyl8, #mantine-imab5yaym · Mantine generates these ids on every load; the same search field now has the stable id items-search */
+
+/* Цвета макета «Экраны.html». Зоны: hi — зелёная, mid — жёлтая, lo — красная.
+   Цвет зоны (--k-hi, --k-mid, --k-lo) — для полосок и точек; текст зоны — тёмным вариантом *-ink,
+   чтобы контраст был не ниже 4.5:1 на белом и на фоне зоны. */
+:root {
+  --k-ink: #16201c;
+  --k-muted: #5e6b66;
+  --k-faint: #65716c;
+  --k-line: #dde3df;
+  --k-line2: #ecf0ed;
+  --k-line-strong: #c5ccc8;
+  --k-field-line: #8a9590;
+  --k-neutral-bg: #eef1ef;
+  --k-on-dark: #ffffff;
+  --k-shadow: rgba(22, 32, 28, 0.25);
+  --k-surface: #ffffff;
+  --k-surface-2: #fafbfa;
+  --k-primary: #0e6b5c;
+  --k-primary-soft: #dcefe9;
+  --k-primary-deep: #0a3f37;
+  --k-primary-tint: #f2faf7;
+  --k-lime: #e4f7a8;
+  --k-lime-line: #c9e57a;
+  --k-lime-ink: #3f5a00;
+  --k-hi: #0e7c66;
+  --k-hi-bg: #ddf3ec;
+  --k-hi-ink: #0b6e5a;
+  --k-mid: #b87700;
+  --k-mid-bg: #fcf0d2;
+  --k-mid-ink: #946200;
+  --k-lo: #c83e52;
+  --k-lo-bg: #fbe3e7;
+  --k-lo-ink: #b83246;
+  --k-cor: #2563c9;
+  --k-cor-bg: #e1ebfb;
+  --k-ok-bg: #e9ecea;
+  --k-flag: #8a5a00;
+  --k-flag-bg: #fff3d6;
+  --k-mode-bg: #fff8e6;
+  --k-mode-line: #f1dfae;
+  --k-mode-ink: #7a5400;
+}
+
+body {
+  background: var(--mantine-color-body);
+  font-size: 14px;
+}
+.mono {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+.row-clickable {
+  cursor: pointer;
+  /* Прокрутка к выбранной строке не прячет её под шапкой приложения (60 px) и уведомлением снизу. */
+  scroll-margin: 76px 0 72px;
+}
+.row-selected td {
+  background: var(--k-primary-tint);
+}
+.row-selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--k-primary);
+}
+
+/* Таблицы: заголовки строчными, на шаг мельче текста ячеек. В макете — капитель; отказались ради читаемости
+   (капитель с разрядкой в 12 px хуже различается и не проходила контраст в приглушённом цвете). */
+.k-table th {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--k-muted);
+  background: var(--k-surface-2);
+}
+
+/* Края полей ввода — не меньше 3:1 к фону, иначе поле теряется на белой карточке. */
+:root[data-mantine-color-scheme="light"] .mantine-Input-wrapper[data-variant="default"] {
+  --input-bd: var(--k-field-line);
+}
+
+:focus-visible {
+  outline: 2px solid var(--k-primary);
+  outline-offset: 2px;
+}
+
+.k-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  padding: 2px 12px;
+  font-size: 12.5px;
+  color: var(--k-muted);
+  background: var(--k-surface);
+  white-space: nowrap;
+}
+
+/* Счётчики над таблицей; выбранный — с тёмной рамкой, как в макете. */
+.k-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--k-surface);
+  border: 1px solid var(--k-line);
+  border-radius: var(--mantine-radius-md);
+  text-align: left;
+
+  &:hover:not([data-active]) {
+    border-color: var(--k-line-strong);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+  &[data-active] {
+    border-color: var(--k-ink);
+    box-shadow: inset 0 0 0 1px var(--k-ink);
+  }
+}
+
+/* Фильтры-чипы над таблицей; выбранный — лаймовый, как в макете. */
+.k-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--k-line);
+  background: var(--k-surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--k-muted);
+  white-space: nowrap;
+
+  &:hover:not([data-active]) {
+    border-color: var(--k-line-strong);
+    color: var(--k-ink);
+  }
+  &:active {
+    transform: translateY(1px);
+  }
+  &[data-active] {
+    background: var(--k-lime);
+    border-color: var(--k-lime-line);
+    color: var(--k-lime-ink);
+  }
+}
+
+/* Плашка режима «без LLM». */
+.k-mode {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  background: var(--k-mode-bg);
+  border: 1px solid var(--k-mode-line);
+  color: var(--k-mode-ink);
+}
+
+/* Панель с главным действием шага, прилипшая к низу экрана; полоса фона под ней закрывает прокручиваемое. */
+.k-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding-bottom: 16px;
+  background: var(--mantine-color-body);
+}

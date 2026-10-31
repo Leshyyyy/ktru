@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from backend.core import ml as ml_adapter
-from backend.core.ml import check_results, describe_mode, load_pipeline
+from backend.core.ml import (
+    CATALOG_FALLBACK,
+    catalog_fallback,
+    check_results,
+    describe_mode,
+    load_pipeline,
+    pipeline_mode,
+)
 from backend.core.settings import Settings
 from contracts.ml_contracts import ClassificationResult, Prediction, RawItem
 from contracts.stub_pipeline import FAKE_CATALOG, StubPipeline
@@ -106,21 +115,41 @@ def test_describe_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ml_adapter, "_installed", lambda module: True)
     assert describe_mode(Settings(pipeline="stub"), {"LLM_API_KEY": "k"})["llm_enabled"] is False
     real = Settings(pipeline="real")
-    assert describe_mode(real, {}) == {
-        "extractor": "hybrid",
-        "reranker": "cross_encoder",
+    assert describe_mode(real, {}) == {  # умолчания ml/config.py
+        "extractor": "rules",
+        "reranker": "none",
         "device": "cpu",
         "llm_enabled": False,
     }
     assert describe_mode(real, {"LLM_API_KEY": "k", "LLM_BASE_URL": "http://llm"})["llm_enabled"] is True
     assert describe_mode(real, {"LLM_API_KEY": "k", "RERANKER": "llm"}) == {
-        "extractor": "hybrid",
+        "extractor": "rules",
         "reranker": "llm",
         "device": "cpu",
         "llm_enabled": True,
     }
     assert describe_mode(real, {"LLM_BASE_URL": "http://llm"})["llm_enabled"] is False
-    assert describe_mode(real, {"EXTRACTOR": "magic", "DEVICE": "tpu"})["extractor"] == "hybrid"
+    assert describe_mode(real, {"EXTRACTOR": "magic", "DEVICE": "tpu"})["extractor"] == "rules"
+
+
+def test_pipeline_mode_prefers_pipeline_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Конвейер с describe_mode() сообщает режим сам; без метода или при его ошибке — режим по переменным."""
+    monkeypatch.setattr(ml_adapter, "_installed", lambda module: True)
+    real = Settings(pipeline="real")
+    reported = {"extractor": "hybrid", "reranker": "llm", "device": "cpu", "llm_enabled": True}
+
+    class Reporting:
+        def describe_mode(self) -> dict[str, object]:
+            return reported
+
+    class Broken:
+        def describe_mode(self) -> dict[str, object]:
+            raise RuntimeError("boom")
+
+    assert pipeline_mode(Reporting(), real) == reported
+    assert pipeline_mode(Broken(), real) == describe_mode(real)
+    assert pipeline_mode(StubPipeline(), Settings(pipeline="stub")) == describe_mode(Settings(pipeline="stub"))
+    assert pipeline_mode(None, real) == describe_mode(real)
 
 
 def test_describe_mode_reports_reranker_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,3 +159,13 @@ def test_describe_mode_reports_reranker_fallbacks(monkeypatch: pytest.MonkeyPatc
     assert describe_mode(real, {})["reranker"] == "none"
     monkeypatch.setattr(ml_adapter, "_installed", lambda module: True)
     assert describe_mode(real, {"RERANKER": "llm"})["reranker"] == "none"
+
+
+def test_catalog_fallback(tmp_path: Path) -> None:
+    """Откат на заглушку — только в режиме real и только когда файла каталога нет (migrate его не скачал)."""
+    path = tmp_path / "catalog.jsonl"
+    real = Settings(pipeline="real", ktru_catalog_path=path)
+    assert catalog_fallback(real) == CATALOG_FALLBACK
+    assert catalog_fallback(Settings(pipeline="stub", ktru_catalog_path=path)) is None
+    path.write_text("{}\n", encoding="utf-8")
+    assert catalog_fallback(real) is None

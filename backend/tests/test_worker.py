@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
+from backend.core.ml import CATALOG_FALLBACK
 from backend.core.readiness import READY_KEY, Heartbeat, read_status, write_status
+from backend.tasks import ml_worker
 from backend.tasks.celery_app import app
 from backend.tasks.ml_worker import _payload
 
@@ -19,11 +23,12 @@ def test_celery_is_configured_for_reliable_json_tasks() -> None:
     assert conf.task_acks_late is True
     assert conf.worker_prefetch_multiplier == 1
     assert (conf.task_soft_time_limit, conf.task_time_limit) == (120, 180)
-    assert {q.name for q in conf.task_queues} == {"io", "ml"}
+    assert {q.name for q in conf.task_queues} == {"io", "ml", "classify"}
     assert conf.task_default_queue == "io"
     assert app.amqp.router.route({}, "ml.process_chunk")["queue"].name == "ml"
     assert app.amqp.router.route({}, "io.parse_file")["queue"].name == "io"
     assert conf.beat_schedule["watchdog"]["task"] == "io.watchdog"
+    assert conf.beat_schedule["cleanup-uploads"]["task"] == "io.cleanup_uploads"
 
 
 def test_ml_worker_waits_for_model_loading() -> None:
@@ -68,3 +73,11 @@ def test_payload_without_pipeline_is_not_ready() -> None:
     assert status["models"] is False
     assert status["catalog"] is False
     assert status["mode"] == {"extractor": "rules", "reranker": "none", "device": "cpu", "llm_enabled": False}
+
+
+def test_payload_reports_catalog_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PIPELINE=real без каталога: воркер работает как заглушка и сообщает причину для /health."""
+    monkeypatch.setattr(ml_worker, "settings", ml_worker.settings.model_copy(update={"pipeline": "real"}))
+    monkeypatch.setitem(ml_worker._state, "fallback", CATALOG_FALLBACK)
+    status = _payload()
+    assert (status["pipeline"], status["fallback"]) == ("stub", CATALOG_FALLBACK)

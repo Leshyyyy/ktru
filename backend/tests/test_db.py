@@ -20,7 +20,7 @@ from backend.core.catalog import CatalogImportError, import_catalog_file
 from backend.core.db import make_engine
 from backend.core.models import Base, CatalogItem, CatalogVersion
 from backend.core.readiness import write_status
-from backend.core.settings import REPO_ROOT, Settings
+from backend.core.settings import FIXTURE_CATALOG, REPO_ROOT, Settings
 
 from .conftest import FakeRedis
 
@@ -180,7 +180,11 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
     path.write_text(
         "\n".join(
             json.dumps(r, ensure_ascii=False)
-            for r in (row, {**row, "name": "Стол письменный"}, {**row, "ktru_code": "11.11.11.111-00000002"})
+            for r in (
+                row,
+                {**row, "name": "Стол письменный"},
+                {**row, "ktru_code": "11.11.11.111-00000002", "is_enlarged": True},
+            )
         )
         + "\n\n",
         encoding="utf-8",
@@ -191,6 +195,10 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
         assert (version.status, version.items_count) == ("ready", 2)
         names = session.scalars(select(CatalogItem.name).where(CatalogItem.version_id == version.id)).all()
         assert sorted(names) == ["Стол", "Стол письменный"]  # повтор кода в файле обновил строку
+        enlarged = session.execute(
+            select(CatalogItem.ktru_code, CatalogItem.is_enlarged).where(CatalogItem.version_id == version.id)
+        ).all()
+        assert sorted(enlarged) == [("11.11.11.111-00000001", False), ("11.11.11.111-00000002", True)]
 
     for bad, message in (
         ("{не json", "Строка 1: некорректный JSON"),
@@ -202,9 +210,79 @@ def test_catalog_import_rules(db_settings: Settings, tmp_path: Path) -> None:
     engine.dispose()
 
 
-def test_seed_fails_clearly_without_catalog_file(db_settings: Settings, tmp_path: Path) -> None:
-    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": tmp_path / "missing.jsonl"})
-    assert migrate.main(real) == 1
+def _catalog_versions(settings: Settings) -> list[tuple[str, int]]:
+    engine = _engine(settings.app_database_url())
+    with Session(engine) as session:
+        rows = session.execute(
+            select(CatalogVersion.source, CatalogVersion.items_count).order_by(CatalogVersion.loaded_at)
+        ).all()
+    engine.dispose()
+    return [tuple(r) for r in rows]
+
+
+def test_real_pipeline_downloads_missing_catalog(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "catalog" / "catalog.jsonl"
+    calls: list[Path] = []
+
+    def download(target: Path) -> bool:
+        calls.append(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(FIXTURE_CATALOG.read_bytes())
+        return True
+
+    monkeypatch.setattr(migrate, "download_catalog", download)
+    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": path})
+    assert migrate.main(real) == 0
+    assert migrate.main(real) == 0  # файл уже на томе — второй раз не скачиваем
+    assert calls == [path]
+    assert _catalog_versions(db_settings) == [("migrate:catalog.jsonl", 8)]
+
+
+def test_catalog_download_failure_falls_back_to_stub(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Path] = []
+
+    def download(target: Path) -> bool:
+        calls.append(target)
+        return False
+
+    monkeypatch.setattr(migrate, "download_catalog", download)
+    monkeypatch.setattr(migrate, "CATALOG_DOWNLOAD_PAUSE_S", 0)
+    real = db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": tmp_path / "catalog.jsonl"})
+    assert migrate.main(real) == 0  # система запускается на заглушке, а не падает
+    assert len(calls) == migrate.CATALOG_DOWNLOAD_ATTEMPTS
+    assert _catalog_versions(db_settings) == [("migrate:fake_catalog.jsonl", 8)]
+
+
+def test_catalog_download_retried_before_stub(
+    db_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Первая попытка не удалась (короткий сбой сети) — вторая скачала каталог, заглушка не включается."""
+    path = tmp_path / "catalog" / "catalog.jsonl"
+    calls: list[Path] = []
+    pauses: list[float] = []
+
+    def flaky(target: Path) -> bool:
+        calls.append(target)
+        if len(calls) == 1:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(FIXTURE_CATALOG.read_bytes())
+        return True
+
+    monkeypatch.setattr(migrate, "download_catalog", flaky)
+    monkeypatch.setattr(migrate.time, "sleep", pauses.append)
+    settings = migrate.prepare_catalog(db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": path}))
+    assert settings.pipeline == "real"
+    assert calls == [path, path]
+    assert pauses == [migrate.CATALOG_DOWNLOAD_PAUSE_S]
+
+
+def test_real_pipeline_without_catalog_path_is_config_error(db_settings: Settings) -> None:
+    assert migrate.main(db_settings.model_copy(update={"pipeline": "real", "ktru_catalog_path": None})) == 1
 
 
 def test_health_reads_catalog_from_database(db_settings: Settings, fake_redis: FakeRedis) -> None:

@@ -77,11 +77,11 @@ def test_parse_rows_concatenation_and_raw_row(tmp_path: Path):
     assert len(items) == 2
     # Проверка склейки слева направо (name -> description -> characteristics)
     assert items[0].row_index == 0
-    assert items[0].raw_text == "Ноутбук Lenovo IdeaPad Core i5 16GB"
+    assert items[0].raw_text == "Ноутбук; Lenovo IdeaPad; Core i5 16GB"
     assert items[0].raw_row == ["A1", "Ноутбук", "Lenovo IdeaPad", "Core i5 16GB", "5"]
 
     assert items[1].row_index == 1
-    assert items[1].raw_text == "Принтер Xerox B230 A4"
+    assert items[1].raw_text == "Принтер; Xerox; B230 A4"
 
 
 def test_parse_rows_empty_name_with_description(tmp_path: Path):
@@ -175,7 +175,7 @@ def test_parse_rows_long_text_preserved(tmp_path: Path):
 
     items = parse_rows(csv_file, header_row=0, column_mapping=mapping)
     assert len(items) == 1
-    assert items[0].raw_text.startswith("Серверный шкаф 42U Характеристика")
+    assert items[0].raw_text.startswith("Серверный шкаф 42U; Характеристика")  # колонки склеиваются через «; »
     assert len(items[0].raw_text) > 2000
     assert items[0].raw_row[1] == long_desc.strip()
 

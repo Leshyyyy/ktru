@@ -93,17 +93,23 @@ class BodySizeLimitMiddleware:
     """Отсекает тела больше max_bytes: по Content-Length сразу, без него — по мере чтения.
 
     nginx пропускает до 60 МБ, а свои 50 МБ на файл приложение проверяет само и отвечает 413 в нашем формате.
+    path_limits — свой лимит для отдельных путей (МБ на файл): каталог КТРУ больше спецификации.
     """
 
-    def __init__(self, app: ASGIApp, *, max_bytes: int, max_file_mb: int):
+    def __init__(
+        self, app: ASGIApp, *, max_file_mb: int, overhead_bytes: int, path_limits: dict[str, int] | None = None
+    ):
         self.app = app
-        self.max_bytes = max_bytes
         self.max_file_mb = max_file_mb
+        self.overhead_bytes = overhead_bytes
+        self.path_limits = path_limits or {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        max_file_mb = self.path_limits.get(scope["path"], self.max_file_mb)
+        max_bytes = max_file_mb * 1024 * 1024 + self.overhead_bytes
 
         for name, value in scope["headers"]:
             if name == b"content-length":
@@ -113,8 +119,8 @@ class BodySizeLimitMiddleware:
                     response = error_response(400, "invalid_request", "Некорректный заголовок Content-Length.")
                     await response(scope, receive, send)
                     return
-                if declared > self.max_bytes:
-                    await file_too_large_response(self.max_file_mb)(scope, receive, send)
+                if declared > max_bytes:
+                    await file_too_large_response(max_file_mb)(scope, receive, send)
                     return
 
         received = 0
@@ -125,7 +131,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > max_bytes:
                     raise BodyTooLarge
             return message
 
@@ -140,4 +146,4 @@ class BodySizeLimitMiddleware:
         except BodyTooLarge:
             if response_started:
                 raise
-            await file_too_large_response(self.max_file_mb)(scope, receive, send)
+            await file_too_large_response(max_file_mb)(scope, receive, send)

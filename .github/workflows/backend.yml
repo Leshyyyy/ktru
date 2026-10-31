@@ -12,6 +12,8 @@ on:
       - ".dockerignore"
       - ".env.example"
       - ".github/workflows/backend.yml"
+      # Образ frontend собирается в job compose (npm run build внутри Dockerfile).
+      - "frontend/**"
   push:
     branches: [dev, main]
     paths:
@@ -23,6 +25,8 @@ on:
       - ".dockerignore"
       - ".env.example"
       - ".github/workflows/backend.yml"
+      # Образ frontend собирается в job compose (npm run build внутри Dockerfile).
+      - "frontend/**"
 
 # Только чтение репозитория: workflow ничего не публикует и секретов не использует.
 permissions:
@@ -65,19 +69,34 @@ jobs:
         run: |
           ruff check backend
           ruff format --check backend
+      - name: Ruff по ml и tests (без правил оформления бэкенда)
+        # Правила backend/pyproject.toml дают в ml/ и tests/ больше сотни замечаний по стилю — это зоны Jove и Донира.
+        # Здесь только то, что указывает на ошибку: в ml/ — базовый набор pyflakes, в tests/ — синтаксис и
+        # неопределённые имена.
+        run: |
+          ruff check --isolated --select E4,E7,E9,F ml
+          ruff check --isolated --select E9,F63,F7,F82 tests
       - name: Тесты
         run: pytest backend/tests
+      - name: Тесты ML (ml/tests)
+        run: pytest ml/tests
       - name: Тесты разбора файлов и экспорта (backend/files)
         run: pytest backend/files/tests
       - name: End-to-End тесты полного конвейера (tests/e2e)
         run: pytest tests/e2e
       - name: Известные уязвимости в зависимостях
         run: pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r backend/requirements-dev.txt
+      - name: Известные уязвимости в зависимостях worker-ml
+        # torch==X+cpu нет на PyPI, и pip-audit его не находит; уязвимости у CPU-сборки те же, что у версии X.
+        run: |
+          sed 's/==\([0-9.]*\)+cpu /==\1 /' backend/requirements-ml.txt > "$RUNNER_TEMP/requirements-ml-audit.txt"
+          pip-audit --strict --disable-pip --require-hashes --progress-spinner off -r "$RUNNER_TEMP/requirements-ml-audit.txt"
 
   compose:
     name: docker compose up
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Первая сборка с torch и моделью, скачивание каталога и расчёт его эмбеддингов — как у проверяющего.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,7 +105,7 @@ jobs:
         run: docker compose up -d --build
       - name: Ждём готовности (/api/v1/health → ready)
         run: |
-          for _ in $(seq 1 60); do
+          for _ in $(seq 1 180); do
             if curl -fsS http://127.0.0.1:8000/api/v1/health \
               | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin)["ready"] else 1)'; then
               curl -fsS http://127.0.0.1:8000/api/v1/config
@@ -96,6 +115,27 @@ jobs:
           done
           curl -sS http://127.0.0.1:8000/api/v1/health || true
           exit 1
+      - name: Настоящий ML, а не откат на заглушку
+        # Откат (каталог не скачался) пишет причину в components.models.detail; у настоящего конвейера detail пуст.
+        run: |
+          curl -fsS http://127.0.0.1:8000/api/v1/health | python3 -c '
+          import json, sys
+          models = json.load(sys.stdin)["components"]["models"]
+          sys.exit(f"worker-ml работает не на настоящем ML: {models}" if models.get("detail") else 0)'
+      - name: Эндпоинты на настоящем ML (/classify, /stats, /quality/latest, импорт каталога)
+        # Импорт делает маленький каталог текущим для новых задач, поэтому задачи в CI после него не создаются.
+        run: python3 backend/tests/compose_smoke.py http://127.0.0.1:8000/api/v1
+      - name: Интерфейс и API через nginx (сервис frontend, :8080)
+        run: |
+          for _ in $(seq 1 24); do
+            if curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'; then break; fi
+            sleep 5
+          done
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          # Адрес страницы SPA отдаёт index.html, /api/ уходит в api.
+          curl -fsS http://127.0.0.1:8080/jobs/00000000-0000-0000-0000-000000000000 | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:8080/api/v1/health \
+            | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin)["ready"] else 1)'
       - name: Логи при ошибке
         if: failure()
         run: |
