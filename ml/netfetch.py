@@ -70,6 +70,7 @@ def download(
             os.replace(part, dest)
             return
         except urllib.error.HTTPError as e:
+            e.close()  # иначе соединение остаётся открытым
             last = e
             if e.code not in RETRY_HTTP:
                 part.unlink(missing_ok=True)

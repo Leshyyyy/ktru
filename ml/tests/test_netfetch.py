@@ -2,7 +2,10 @@
 
 import hashlib
 import http.server
+import io
 import threading
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -91,6 +94,20 @@ def test_gives_up_after_attempts(serve, tmp_path):
         download(url, tmp_path / "f", sleep=lambda s: None)
     assert state["n"] == 5
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("code", [404, 503])
+def test_http_error_response_is_closed(code, tmp_path, monkeypatch):
+    bodies = []
+
+    def urlopen(req, timeout):
+        bodies.append(io.BytesIO(b"error"))
+        raise urllib.error.HTTPError(req.full_url, code, "error", None, bodies[-1])
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    with pytest.raises(DownloadError):
+        download("http://127.0.0.1/f", tmp_path / "f", sleep=lambda s: None)
+    assert bodies and all(body.closed for body in bodies)
 
 
 def test_fetch_catalog_stops_with_readable_message(serve, tmp_path, monkeypatch):
