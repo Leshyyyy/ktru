@@ -69,8 +69,17 @@ jobs:
         run: |
           ruff check backend
           ruff format --check backend
+      - name: Ruff по ml и tests (без правил оформления бэкенда)
+        # Правила backend/pyproject.toml дают в ml/ и tests/ больше сотни замечаний по стилю — это зоны Jove и Донира.
+        # Здесь только то, что указывает на ошибку: в ml/ — базовый набор pyflakes, в tests/ — синтаксис и
+        # неопределённые имена.
+        run: |
+          ruff check --isolated --select E4,E7,E9,F ml
+          ruff check --isolated --select E9,F63,F7,F82 tests
       - name: Тесты
         run: pytest backend/tests
+      - name: Тесты ML (ml/tests)
+        run: pytest ml/tests
       - name: Тесты разбора файлов и экспорта (backend/files)
         run: pytest backend/files/tests
       - name: End-to-End тесты полного конвейера (tests/e2e)
