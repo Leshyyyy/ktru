@@ -7,7 +7,7 @@
 
 Проект сделан для кейс-чемпионата B2B-РТС, задача 5 «ИИ-классификатор КТРУ».
 
-**Видео-демонстрация** (4 мин 32 с): [`video/KTRU_demo.mp4`](video/KTRU_demo.mp4).
+**Видео-демонстрация** (4 мин 32 с): [`video/KTRU_demo.mp4`](video/KTRU_demo.mp4). (ссылка на Google Disk:https://drive.google.com/drive/folders/1TG3IhU1YDXHF5Bo2JN_6STvTzq-Nk16z?usp=drive_link)
 
 ![Таблица результатов](docs/team/%D0%A1%D0%BA%D1%80%D0%B8%D0%BD%D1%88%D0%BE%D1%82%D1%8B%20%D1%8D%D0%BA%D1%80%D0%B0%D0%BD%D0%BE%D0%B2/04_%D0%A0%D0%B5%D0%B7%D1%83%D0%BB%D1%8C%D1%82%D0%B0%D1%82%D1%8B.png)
 
