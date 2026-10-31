@@ -34,6 +34,9 @@ export const theme = createTheme({
     Badge: { defaultProps: { radius: "sm" } },
     Button: { defaultProps: { radius: 9 } },
     Tooltip: { defaultProps: { multiline: true, maw: 320, withArrow: true, openDelay: 250 } },
+    // Заголовок плашки цветом текста: оранжевый и жёлтый Mantine на светлом фоне плашки не дают контраста 4.5:1,
+    // а смысл и так несут фон плашки и сами слова.
+    Alert: { styles: { title: { color: "var(--k-ink)" } } },
   },
 });
 

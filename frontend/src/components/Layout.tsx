@@ -6,6 +6,7 @@ import { NavLink, Outlet, useLocation } from "react-router";
 import { API_MODE } from "../api/client";
 import { useCatalogVersions, useConfig, useHealth } from "../api/hooks";
 import { plural } from "../lib/format";
+import { notReadyReasons, stubReason } from "../lib/health";
 import classes from "./Layout.module.css";
 
 // Порядок как в макете: сначала список задач — с него специалист начинает день.
@@ -66,7 +67,7 @@ export function Layout() {
             </Text>
           </Box>
         )}
-        <SystemNotReady />
+        <SystemNotice />
         <Box className={classes.page}>
           <Outlet />
         </Box>
@@ -108,7 +109,8 @@ function SystemPill() {
   const versions = useCatalogVersions();
   const mode = useConfig().data?.mode;
   const v = versions.data?.items.find((x) => x.status === "ready");
-  const state = health.isError ? "error" : health.data?.ready ? "ok" : "wait";
+  const stub = API_MODE === "memory" ? null : stubReason(health.data);
+  const state = health.isError ? "error" : !health.data?.ready ? "wait" : stub ? "stub" : "ok";
   // Пока у бэкенда нет /catalog/versions, берём описание каталога из /health.
   const label = v
     ? `Каталог: ${v.items_count.toLocaleString("ru-RU")} ${plural(v.items_count, "код", "кода", "кодов")}`
@@ -122,7 +124,9 @@ function SystemPill() {
       ? "Нет связи с сервером"
       : state === "wait"
         ? "Готовится: загружаются модели или каталог"
-        : "Готова к работе";
+        : state === "stub"
+          ? "Работает заглушка: коды 99.99.* вымышленные"
+          : "Готова к работе";
   return (
     <Popover position="bottom-end" width={340} shadow="md" withArrow>
       <Popover.Target>
@@ -138,7 +142,14 @@ function SystemPill() {
         </Text>
         <dl className={classes.about}>
           <dt>Состояние</dt>
-          <dd>{status}</dd>
+          <dd>
+            {status}
+            {stub && (
+              <Text size="xs" c="dimmed" mt={4}>
+                {stub}
+              </Text>
+            )}
+          </dd>
           <dt>Каталог КТРУ</dt>
           <dd>
             {v
@@ -165,21 +176,45 @@ function SystemPill() {
   );
 }
 
-function SystemNotReady() {
+/**
+ * Что мешает работе — текстами из /health, без своих формулировок поверх (тексты пишет бэкенд):
+ * - система не готова: перечисляем компоненты с ok = false;
+ * - система готова, но ML-воркер отвечает заглушкой (каталог не скачался или PIPELINE=stub): коды 99.99.* вымышленные,
+ *   и без этой плашки проверяющий принял бы их за настоящий подбор.
+ */
+function SystemNotice() {
   const { data, isError } = useHealth();
   if (isError)
     return (
       <Box className={classes.page} pb={0}>
         <Alert color="red" title="Нет связи с сервером">
-          Проверьте, что система запущена (docker-compose up), и обновите страницу.
+          Проверьте, что система запущена (docker compose up), и обновите страницу.
         </Alert>
       </Box>
     );
-  if (data && !data.ready)
+  if (data && !data.ready) {
+    const problems = notReadyReasons(data);
     return (
       <Box className={classes.page} pb={0}>
-        <Alert color="yellow" title="Система готовится: загружаются модели">
-          Обычно это занимает до минуты. Страница обновится сама.
+        <Alert color="yellow" title="Система ещё не готова">
+          {problems.map((p) => (
+            <Text key={p} size="sm">
+              {p}
+            </Text>
+          ))}
+          <Text size="sm" mt={problems.length ? "xs" : 0}>
+            Обычно это занимает до минуты, первый запуск дольше. Страница обновится сама.
+          </Text>
+        </Alert>
+      </Box>
+    );
+  }
+  const stub = stubReason(data);
+  if (stub && API_MODE !== "memory")
+    return (
+      <Box className={classes.page} pb={0}>
+        <Alert color="orange" title="Работает демонстрационная заглушка, а не настоящий подбор кодов">
+          {stub}
         </Alert>
       </Box>
     );
