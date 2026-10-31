@@ -19,11 +19,12 @@ import { IconPlayerPlay, IconTargetArrow } from "@tabler/icons-react";
 import { API_MODE } from "../api/client";
 import { useQuality, useRunQuality, useStats, type EvalSplit } from "../api/hooks";
 import type { QualityRun } from "../api/types";
-import { dateTime, duration, pct, plural } from "../lib/format";
+import { dateTime, decimal, duration, pct, plural } from "../lib/format";
 
 /**
- * Метрики и цели — из docs/analytics/09-data-quality.md. Критерии организаторов помечены.
- * Метрика без цели (target) показывается справочно.
+ * Метрики и цели — из docs/analytics/09-data-quality.md. Критерии организаторов (official) помечены и выделены цветом.
+ * Остальные цели команда поставила себе сама, с запасом: их выполнение видно по ✓/✗ и подписи, но без красного,
+ * чтобы не путать с провалом критерия ТЗ. Метрика без цели (target) показывается справочно.
  */
 const METRICS: {
   key: string;
@@ -116,6 +117,7 @@ export function QualityPage() {
           <Text c="dimmed" mt={4}>
             Замеры на размеченном наборе: система подбирает коды для позиций с известным ответом, и мы считаем, как
             часто она права. Подтверждённые ответы пользователей при замере отключены, чтобы не завышать результат.
+            Требования организаторов отмечены «критерий ТЗ», остальные цели команда поставила себе сама, с запасом.
           </Text>
         </div>
         <Group gap="sm">
@@ -254,6 +256,11 @@ function RunCard({ run }: { run: QualityRun }) {
               const v = num(m, d.key);
               if (v == null) return null;
               const ok = d.target == null ? null : d.lowerIsBetter ? v <= d.target : v >= d.target;
+              const fmt = (x: number) => (d.lowerIsBetter ? decimal(x, 3) : pct(x));
+              const goal =
+                d.target == null ? null : d.lowerIsBetter ? `≤ ${decimal(d.target, 2)}` : `≥ ${pct(d.target)}`;
+              // Цветом выделяем только критерии организаторов; свои цели — нейтрально, но с ✓/✗.
+              const tone = ok == null || !d.official ? null : ok ? "var(--k-hi-ink)" : "var(--k-lo-ink)";
               return (
                 <Tooltip key={d.key} label={d.hint}>
                   <Stack gap={4}>
@@ -266,19 +273,17 @@ function RunCard({ run }: { run: QualityRun }) {
                       )}
                     </Text>
                     <Group gap="xs" align="baseline">
-                      <Text fz={26} fw={600} className="tabular" c={ok === false ? "var(--k-lo-ink)" : undefined}>
-                        {d.lowerIsBetter ? v.toFixed(3) : pct(v)}
+                      <Text fz={26} fw={600} className="tabular" c={ok === false && tone ? tone : undefined}>
+                        {fmt(v)}
                       </Text>
-                      <Text size="sm" c={ok == null ? "dimmed" : ok ? "var(--k-hi-ink)" : "var(--k-lo-ink)"}>
-                        {ok == null
-                          ? "справочно"
-                          : `${ok ? "✓" : "✗"} цель ${d.lowerIsBetter ? `≤ ${d.target}` : `≥ ${pct(d.target!)}`}`}
+                      <Text size="sm" c={tone ?? "dimmed"}>
+                        {ok == null ? "справочно" : `${ok ? "✓" : "✗"} ${d.official ? "цель" : "цель команды"} ${goal}`}
                       </Text>
                     </Group>
                     {!d.lowerIsBetter && (
                       <Progress
                         value={v * 100}
-                        color={ok === false ? "var(--k-lo)" : ok ? "var(--k-hi)" : "var(--k-line-strong)"}
+                        color={!tone ? "var(--k-line-strong)" : ok ? "var(--k-hi)" : "var(--k-lo)"}
                         size="sm"
                       />
                     )}
