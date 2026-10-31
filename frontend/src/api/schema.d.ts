@@ -1558,6 +1558,11 @@ export interface components {
        * @enum {string}
        */
       status: "active" | "archived";
+      /**
+       * @description Укрупнённая позиция (is_template в выгрузке ЕИС): обобщает группу кодов, ответом и в поиске не выдаётся.
+       * @default false
+       */
+      is_enlarged: boolean;
       replaced_by?: string | null;
       characteristics?: components["schemas"]["CatalogCharacteristic"][];
     };

@@ -89,7 +89,8 @@
   &[data-state="ok"] {
     background: var(--k-hi);
   }
-  &[data-state="wait"] {
+  &[data-state="wait"],
+  &[data-state="stub"] {
     background: var(--k-mid);
   }
   &[data-state="error"] {
