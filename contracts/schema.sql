@@ -82,9 +82,18 @@ CREATE TABLE file_layouts (
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
+-- Комплект — несколько файлов, загруженных и обработанных вместе (POST /batches). Каждый файл — обычная задача
+-- с jobs.batch_id; прогресс и сводка комплекта считаются по его задачам.
+CREATE TABLE batches (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        text,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE jobs (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     file_id             uuid        NOT NULL REFERENCES source_files(id),
+    batch_id            uuid        REFERENCES batches(id),        -- NULL — задача создана отдельно (POST /jobs)
     catalog_version_id  uuid        NOT NULL REFERENCES catalog_versions(id),
     status              text        NOT NULL DEFAULT 'queued'
                         CHECK (status IN ('queued', 'parsing', 'processing', 'done',
@@ -113,6 +122,7 @@ CREATE TABLE jobs (
 
 CREATE INDEX jobs_created_at ON jobs (created_at DESC);
 CREATE INDEX jobs_status     ON jobs (status, updated_at);
+CREATE INDEX jobs_batch      ON jobs (batch_id) WHERE batch_id IS NOT NULL;
 
 CREATE FUNCTION set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -188,6 +198,20 @@ CREATE TABLE decisions (
 );
 
 CREATE INDEX decisions_item ON decisions (item_id, created_at DESC);
+
+-- Значения характеристик, введённые пользователем для итогового кода позиции (PUT /items/{id}/characteristics).
+-- Только добавление, как decisions: действует последняя строка по (item_id, ktru_code, name).
+-- Смена итогового кода не стирает значения: они остаются за прежним кодом и вернутся, если код вернут.
+CREATE TABLE item_characteristic_values (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    item_id     uuid        NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    ktru_code   text        NOT NULL,
+    name        text        NOT NULL,                         -- имя характеристики, как в catalog_items.characteristics
+    value       text,                                         -- NULL — пользователь убрал введённое значение
+    created_at  timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX item_characteristic_values_item ON item_characteristic_values (item_id, ktru_code, name, created_at DESC);
 
 -- Эталонные пары «текст → код» из подтверждений и правок. Их ищет Retriever как дополнительный источник.
 CREATE TABLE confirmed_examples (

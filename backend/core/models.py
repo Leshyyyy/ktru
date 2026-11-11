@@ -105,11 +105,22 @@ class FileLayout(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_NOW)
 
 
+class Batch(Base):
+    """Комплект: несколько файлов, обработанных вместе; каждый файл — обычная задача с jobs.batch_id."""
+
+    __tablename__ = "batches"
+
+    id: Mapped[uuid.UUID] = _id()
+    name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=_NOW)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[uuid.UUID] = _id()
     file_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("source_files.id"))
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("batches.id"))
     catalog_version_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("catalog_versions.id"))
     status: Mapped[str] = mapped_column(Text, server_default=text("'queued'"))
     column_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB)
@@ -175,6 +186,19 @@ class Decision(Base):
     ktru_code: Mapped[str] = mapped_column(Text)
     old_code: Mapped[str | None] = mapped_column(Text)
     reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("clock_timestamp()"))
+
+
+class ItemCharacteristicValue(Base):
+    """Значение характеристики, введённое пользователем; только добавление, действует последнее по (item, код, имя)."""
+
+    __tablename__ = "item_characteristic_values"
+
+    id: Mapped[uuid.UUID] = _id()
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("items.id", ondelete="CASCADE"))
+    ktru_code: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    value: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("clock_timestamp()"))
 
 
