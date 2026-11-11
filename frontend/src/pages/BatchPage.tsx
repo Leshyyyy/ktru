@@ -29,6 +29,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { useBatch, useBatchExport, useItems } from "../api/hooks";
 import type { Batch } from "../api/types";
 import { BatchStatusBadge, JobStatusBadge } from "../components/badges";
+import { ItemDrawer } from "../components/ItemDrawer";
 import { batchTitle } from "./JobsPage";
 import { dateTime, duration, plural } from "../lib/format";
 
@@ -69,17 +70,11 @@ function BatchView({ batch }: { batch: Batch }) {
   const [sp, setSp] = useSearchParams();
   const missingOnly = sp.get("missing_required") === "true";
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [openItem, setOpenItem] = useState<{ itemId: string; jobId: string } | null>(null);
+  // Задача выбранной позиции — чтобы карточка открылась для правильного каталога.
+  const openItemJob = openItem ? batch.jobs.find((j) => j.job_id === openItem.jobId) : undefined;
 
-  // Задачи комплекта — из GET /batches; для фильтра по файлам берём позиции каждой задачи отдельно.
-  const files = batch.jobs.map((job) => {
-    const { data } = useItems(job.job_id, {
-      page: 1,
-      page_size: 1000,
-      missing_required: missingOnly || undefined,
-    });
-    return { job, items: data?.items ?? [] };
-  });
-  const visibleFiles = missingOnly ? files.filter((f) => f.items.length > 0) : files;
+  const jobs = batch.jobs;
 
   return (
     <Stack gap="lg">
@@ -133,84 +128,142 @@ function BatchView({ batch }: { batch: Batch }) {
         </Alert>
       )}
 
-      {visibleFiles.length === 0 ? (
+      {jobs.length === 0 ? (
         <Center py={50}>
           <Text fw={500}>{missingOnly ? "Нет позиций с незаполненными обязательными" : "Позиций пока нет"}</Text>
         </Center>
       ) : (
         <Card p={0}>
-          {visibleFiles.map(({ job, items }) => {
-            const open = expanded[job.job_id] ?? true;
-            return (
-              <div key={job.job_id} className="k-batch-group">
-                <UnstyledButton
-                  className="k-batch-hdr"
-                  onClick={() => setExpanded((e) => ({ ...e, [job.job_id]: !(e[job.job_id] ?? true) }))}
-                  aria-expanded={open}
-                >
-                  <IconChevronDown size={16} style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }} />
-                  <Text fw={600} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
-                    {job.filename}
-                  </Text>
-                  <JobStatusBadge status={job.status} />
-                  <Text size="xs" c="var(--k-faint)" className="tabular">
-                    {job.total_items ? `${job.processed_items + job.failed_items} из ${job.total_items}` : "…"}
-                  </Text>
-                </UnstyledButton>
-                {open && (
-                  <ScrollArea type="auto">
-                    <Table className="k-table" highlightOnHover verticalSpacing={8} horizontalSpacing={12} miw={760}>
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th w={56}>Стр.</Table.Th>
-                          <Table.Th>Позиция</Table.Th>
-                          <Table.Th w={240}>Код КТРУ</Table.Th>
-                          <Table.Th w={90}>Кол-во</Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {items.map((it) => (
-                          <Table.Tr key={it.item_id}>
-                            <Table.Td>
-                              <Text size="sm" c="dimmed" className="tabular">
-                                {it.row_index + 1}
-                              </Text>
-                            </Table.Td>
-                            <Table.Td style={{ overflowWrap: "anywhere" }}>
-                              <Text size="sm">{it.raw_text}</Text>
-                              {it.missing_required_count ? (
-                                <Text size="xs" c="var(--k-lo-ink)" mt={2}>
-                                  не заполнено обязательных: {it.missing_required_count}
-                                </Text>
-                              ) : null}
-                            </Table.Td>
-                            <Table.Td>
-                              <Text size="sm" className="mono">
-                                {it.final?.ktru_code ?? "—"}
-                              </Text>
-                              <Text size="xs" c="dimmed" lineClamp={1}>
-                                {it.final?.name}
-                              </Text>
-                            </Table.Td>
-                            <Table.Td>
-                              <Text size="sm" c="dimmed" className="tabular">
-                                {it.extracted?.quantity != null
-                                  ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}`
-                                  : "—"}
-                              </Text>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                  </ScrollArea>
-                )}
-              </div>
-            );
-          })}
+          {jobs.map((job) => (
+            <BatchFileGroup
+              key={job.job_id}
+              job={job}
+              missingOnly={missingOnly}
+              open={expanded[job.job_id] ?? true}
+              onToggle={() => setExpanded((e) => ({ ...e, [job.job_id]: !(e[job.job_id] ?? true) }))}
+              onOpenItem={(itemId, jobId) => setOpenItem({ itemId, jobId })}
+            />
+          ))}
         </Card>
       )}
+
+      {/* Отдельная карточка выбранной позиции поверх страницы — как на странице задачи. */}
+      <ItemDrawer
+        itemId={openItem ? openItem.itemId : null}
+        job={openItemJob ?? batch.jobs[0]!}
+        onClose={() => setOpenItem(null)}
+        onAfterDecision={() => setOpenItem(null)}
+        onGroup={(_g) => {}}
+      />
     </Stack>
+  );
+}
+
+/** Одна группа файла комплекта. Позиции запрашиваются отдельно от задачи — useItems нельзя в map(). */
+function BatchFileGroup({
+  job,
+  missingOnly,
+  open,
+  onToggle,
+  onOpenItem,
+}: {
+  job: Batch["jobs"][number];
+  missingOnly: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onOpenItem: (itemId: string, jobId: string) => void;
+}) {
+  // Контракт: PageSize максимум 200. Грузим страницами по 200 и «Показать ещё» догружает следующие.
+  const PAGE = 200;
+  const active = ["queued", "parsing", "processing"].includes(job.status);
+  const [page, setPage] = useState(1);
+  const { data, isFetching } = useItems(
+    job.job_id,
+    {
+      page,
+      page_size: PAGE,
+      missing_required: missingOnly || undefined,
+    },
+    // Во время обработки подтягиваем готовые позиции, как на странице задачи.
+    { refetchInterval: active ? 2000 : false },
+  );
+  const items = data?.items ?? [];
+  const shownCount = page * PAGE;
+  const hasMore = data?.total != null && data.total > shownCount;
+
+  return (
+    <div className="k-batch-group">
+      <UnstyledButton className="k-batch-hdr" onClick={onToggle} aria-expanded={open}>
+        <IconChevronDown size={16} style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)" }} />
+        <Text fw={600} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
+          {job.filename}
+        </Text>
+        <JobStatusBadge status={job.status} />
+        <Text size="xs" c="var(--k-faint)" className="tabular">
+          {job.total_items ? `${job.processed_items + job.failed_items} из ${job.total_items}` : "…"}
+        </Text>
+      </UnstyledButton>
+      {open && (
+        <ScrollArea type="auto">
+          <Table className="k-table" highlightOnHover verticalSpacing={8} horizontalSpacing={12} miw={760}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={56}>Стр.</Table.Th>
+                <Table.Th>Позиция</Table.Th>
+                <Table.Th w={240}>Код КТРУ</Table.Th>
+                <Table.Th w={90}>Кол-во</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {items.map((it) => (
+                <Table.Tr
+                  key={it.item_id}
+                  className="row-clickable"
+                  onClick={() => onOpenItem(it.item_id, job.job_id)}
+                >
+                  <Table.Td>
+                    <Text size="sm" c="dimmed" className="tabular">
+                      {it.row_index + 1}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td style={{ overflowWrap: "anywhere" }}>
+                    <Text size="sm">{it.raw_text}</Text>
+                    {it.missing_required_count ? (
+                      <Text size="xs" c="var(--k-lo-ink)" mt={2}>
+                        не заполнено обязательных: {it.missing_required_count}
+                      </Text>
+                    ) : null}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" className="mono">
+                      {it.final?.ktru_code ?? "—"}
+                    </Text>
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {it.final?.name}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed" className="tabular">
+                      {it.extracted?.quantity != null
+                        ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}`
+                        : "—"}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+          {hasMore && (
+            <Group justify="center" p="sm">
+              <Button variant="subtle" size="xs" onClick={() => setPage((p) => p + 1)} loading={isFetching}>
+                Показать ещё
+              </Button>
+            </Group>
+          )}
+          {!data && <Skeleton h={80} m="sm" />}
+        </ScrollArea>
+      )}
+    </div>
   );
 }
 
@@ -253,7 +306,8 @@ function BatchSummary({ batch }: { batch: Batch }) {
 function BatchExport({ batch }: { batch: Batch }) {
   const exp = useBatchExport();
   const [, setSp] = useSearchParams();
-  const done = batch.status === "done" || batch.status === "done_with_errors" || batch.status === "cancelled";
+  // Выгрузка доступна, когда ни одна задача комплекта не обрабатывается (включая failed/cancelled).
+  const done = batch.status !== "processing";
   const missing = batch.summary.missing_required ?? 0;
 
   const doExport = (format: "xlsx" | "csv" | "json" | "application") =>
@@ -283,8 +337,8 @@ function BatchExport({ batch }: { batch: Batch }) {
       title: "Незаполненные обязательные характеристики",
       children: (
         <Text size="sm">
-          У {missing} {plural(missing, "позиции", "позиций", "позиций")} в комплекте код не заполнен обязательными
-          характеристиками. В выгрузке такие строки помечены «не заполнено».
+          У {missing} {plural(missing, "позиции", "позиций", "позиций")} в комплекте не заполнены обязательные
+          характеристики итогового кода. В выгрузке «для заявки» такие строки помечены «не заполнено».
         </Text>
       ),
       labels: { confirm: "Выгрузить всё равно", cancel: "Показать их" },

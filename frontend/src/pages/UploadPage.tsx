@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -411,6 +412,8 @@ function MultiFileFlow() {
   const [files, setFiles] = useState<PendingFile[]>([]);
   // Пер-файловая конфигурация: file_id → выбранный лист и сопоставление колонок.
   const [configs, setConfigs] = useState<Record<string, { sheet: string; mapping: Mapping }>>({});
+  // Индекс файла (в запросе к POST /batches), который не прошёл проверку — подсветпить его в списке.
+  const [batchErrorIndex, setBatchErrorIndex] = useState<number | null>(null);
 
   const setConfig = (fileId: string, sheet: string, mapping: Mapping) =>
     setConfigs((prev) => ({ ...prev, [fileId]: { sheet, mapping } }));
@@ -427,14 +430,23 @@ function MultiFileFlow() {
     }
     const batch = list.slice(0, remaining).map((file) => {
       const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      upload.mutate(file, {
-        onSuccess: (info) =>
-          setFiles((prev) => prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p))),
-        onError: (e) =>
+      // mutateAsync на каждый файл: у useMutation() колбэки из mutate() срабатывают только у последнего
+      // вызова, поэтому запускаем файлы отдельными промисами.
+      upload
+        .mutateAsync(file)
+        .then((info) => {
+          setFiles((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p)),
+          );
+          // Сразу закладываем начальное сопоставление колонок — чтобы уверенные свёрнутые листы не блокировали запуск.
+          const first = info.sheets[0];
+          setConfigs((prev) => ({ ...prev, [info.file_id]: { sheet: first?.name ?? "", mapping: initialMapping(first, info) } }));
+        })
+        .catch((e) =>
           setFiles((prev) =>
             prev.map((p) => (p.id === id ? { ...p, state: "error", message: (e as Error).message } : p)),
           ),
-      });
+        );
       return { id, file, state: "uploading" as const };
     });
     setFiles((prev) => [...prev, ...batch]);
@@ -450,6 +462,18 @@ function MultiFileFlow() {
     if (!c) return true;
     return validate(c.mapping) !== null;
   });
+  // Файл с ошибкой POST /batches (details.job_index) — номер в запросе, совпадает с порядком в ready.
+  const errFile = batchErrorIndex != null ? ready[batchErrorIndex] : undefined;
+
+  const removeFile = (id: string) => {
+    const p = files.find((f) => f.id === id);
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+    if (p?.info) setConfigs((prev) => {
+      const next = { ...prev };
+      delete next[p.info!.file_id];
+      return next;
+    });
+  };
 
   const start = () => {
     if (ready.length === 0 || hasError || uploading || !allConfigured || invalidFile) return;
@@ -469,8 +493,13 @@ function MultiFileFlow() {
     const body = { name: name.trim() || null, jobs };
     createBatch.mutate(body, {
       onSuccess: (batch) => navigate(`/batches/${batch.batch_id}`),
-      onError: (e) =>
-        notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message }),
+      onError: (e) => {
+        // POST /batches отвечает 422 с details.job_index, когда не прошла одна из задач — подсветить этот файл.
+        const idx =
+          e instanceof ApiRequestError && e.details && typeof e.details.job_index === "number" ? e.details.job_index : null;
+        setBatchErrorIndex(idx);
+        notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message });
+      },
     });
   };
 
@@ -521,29 +550,65 @@ function MultiFileFlow() {
         <Card>
           <Stack gap="sm">
             <Text fw={600}>Загруженные файлы</Text>
-            {files.map((p) => (
-              <Group key={p.id} justify="space-between" wrap="nowrap" gap="sm">
-                <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
-                  <IconFileSpreadsheet
-                    size={16}
-                    className={p.state === "error" ? "k-ico-err" : p.state === "ok" ? "k-ico-ok" : "k-ico-dim"}
-                  />
-                  <Text size="sm" lineClamp={1}>
-                    {p.file.name}
-                  </Text>
-                  {p.state === "ok" && p.info && (
-                    <Text size="xs" c="dimmed">
-                      {p.info.sheets.length} {plural(p.info.sheets.length, "лист", "листа", "листов")}
+            {files.map((p) => {
+              const isErr = errFile?.file_id === p.info?.file_id;
+              return (
+                <Group
+                  key={p.id}
+                  justify="space-between"
+                  wrap="nowrap"
+                  gap="sm"
+                  data-batch-err={isErr || undefined}
+                  style={isErr ? { padding: "6px 10px", border: "1px solid var(--k-lo)", borderRadius: 8, background: "var(--k-lo-bg)" } : undefined}
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <IconFileSpreadsheet
+                      size={16}
+                      className={p.state === "error" ? "k-ico-err" : p.state === "ok" ? "k-ico-ok" : "k-ico-dim"}
+                    />
+                    <Text size="sm" lineClamp={1}>
+                      {p.file.name}
                     </Text>
-                  )}
+                    {p.state === "ok" && p.info && (
+                      <Text size="xs" c="dimmed">
+                        {p.info.sheets.length} {plural(p.info.sheets.length, "лист", "листа", "листов")}
+                      </Text>
+                    )}
+                  </Group>
+                  <Group gap="sm" wrap="nowrap" align="center">
+                    {isErr && (
+                      <Text size="xs" c="var(--k-lo-ink)">
+                        проверьте роли колонок
+                      </Text>
+                    )}
+                    <Text size="xs" c={p.state === "error" ? "var(--k-lo-ink)" : "dimmed"} className="tabular">
+                      {p.state === "uploading" ? "загружается…" : p.state === "ok" ? "готов" : p.message}
+                    </Text>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="sm"
+                      onClick={() => removeFile(p.id)}
+                      disabled={p.state === "uploading"}
+                      aria-label={`Убрать файл ${p.file.name}`}
+                    >
+                      <IconX size={14} />
+                    </ActionIcon>
+                  </Group>
                 </Group>
-                <Text size="xs" c={p.state === "error" ? "var(--k-lo-ink)" : "dimmed"} className="tabular">
-                  {p.state === "uploading" ? "загружается…" : p.state === "ok" ? "готов" : p.message}
-                </Text>
-              </Group>
-            ))}
+              );
+            })}
             <Group justify="flex-end">
-              <Button variant="subtle" color="gray" onClick={() => setFiles([])} disabled={uploading}>
+              <Button
+                variant="subtle"
+                color="gray"
+                onClick={() => {
+                  setFiles([]);
+                  setConfigs({});
+                  setBatchErrorIndex(null);
+                }}
+                disabled={uploading}
+              >
                 Очистить список
               </Button>
             </Group>

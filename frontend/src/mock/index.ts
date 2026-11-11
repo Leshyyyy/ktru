@@ -774,7 +774,11 @@ const routes: [string, string, Handler][] = [
       if (!job) return notFound("job", "Задача не найдена.");
       const sp = url.searchParams;
       const page = Number(sp.get("page") ?? 1);
-      const size = Math.min(200, Number(sp.get("page_size") ?? 50));
+      const rawSize = Number(sp.get("page_size") ?? 50);
+      // Контракт: PageSize максимум 200; отвечаем 400, как настоящий бэкенд (не молча режем).
+      if (rawSize > 200)
+        return err(400, "invalid_request", "page_size не может быть больше 200.", { field: "page_size" });
+      const size = rawSize;
       const q = sp.get("q")?.toLowerCase().trim();
       let list = job.items.map(itemView);
       if (sp.get("band")) list = list.filter((v) => v.band === sp.get("band"));

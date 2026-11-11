@@ -168,11 +168,12 @@ export type ItemsParams = {
  * Позиции задачи. Отдельно их не опрашиваем: страница задачи сама сбрасывает этот кэш,
  * когда в опросе задачи меняется число обработанных позиций, — таблица и прогресс не расходятся.
  */
-export function useItems(jobId: string, params: ItemsParams) {
+export function useItems(jobId: string, params: ItemsParams, opts?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: keys.items(jobId, params),
     queryFn: () => unwrap(api.GET("/jobs/{job_id}/items", { params: { path: { job_id: jobId }, query: params } })),
     placeholderData: keepPreviousData,
+    refetchInterval: opts?.refetchInterval ?? false,
   });
 }
 
