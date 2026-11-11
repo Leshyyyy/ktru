@@ -245,7 +245,12 @@ function JobView({ job }: { job: Job }) {
             )}
             {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
             {/* Пока есть спорные, главное — проверка; когда их нет, главной становится выгрузка. */}
-            <ExportMenu job={job} disabled={!finished} emphasis={disputed === 0} onShowMissing={() => setParam("missing_required", "true")} />
+            <ExportMenu
+              job={job}
+              disabled={!finished}
+              emphasis={disputed === 0}
+              onShowMissing={() => setParam("missing_required", "true")}
+            />
           </Group>
         </Group>
       </Stack>

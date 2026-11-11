@@ -28,7 +28,13 @@ import {
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
 import { IconArrowDown, IconArrowUp, IconCheck, IconMinus, IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
-import { useCatalogItem, useCatalogSearch, useItem, useItemCharacteristics, useUpdateCharacteristics } from "../api/hooks";
+import {
+  useCatalogItem,
+  useCatalogSearch,
+  useItem,
+  useItemCharacteristics,
+  useUpdateCharacteristics,
+} from "../api/hooks";
 import type { CharacteristicMatch, Item, ItemCharacteristic, Job, Prediction } from "../api/types";
 import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode, useThresholds } from "./badges";
 import { useDecisions, useWithOverlay } from "./DecisionQueue";
