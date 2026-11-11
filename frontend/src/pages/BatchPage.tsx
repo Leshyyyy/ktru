@@ -112,14 +112,12 @@ function BatchView({ batch }: { batch: Batch }) {
         <Card>
           <Stack gap="xs">
             <Group justify="space-between">
-              <Text fw={600}>Обрабатывается {batch.total_items > 0 ? `${batch.processed_items + batch.failed_items} из ${batch.total_items}` : ""}</Text>
+              <Text fw={600}>
+                Обрабатывается{" "}
+                {batch.total_items > 0 ? `${batch.processed_items + batch.failed_items} из ${batch.total_items}` : ""}
+              </Text>
             </Group>
-            <Progress
-              value={Math.max(batch.progress * 100, 2)}
-              size="lg"
-              animated
-              striped
-            />
+            <Progress value={Math.max(batch.progress * 100, 2)} size="lg" animated striped />
             <Text size="xs" c="dimmed">
               Файлы комплекта обрабатываются вместе. Готовые позиции уже видны ниже.
             </Text>
@@ -196,7 +194,9 @@ function BatchView({ batch }: { batch: Batch }) {
                             </Table.Td>
                             <Table.Td>
                               <Text size="sm" c="dimmed" className="tabular">
-                                {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
+                                {it.extracted?.quantity != null
+                                  ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}`
+                                  : "—"}
                               </Text>
                             </Table.Td>
                           </Table.Tr>
@@ -295,12 +295,7 @@ function BatchExport({ batch }: { batch: Batch }) {
   };
 
   const button = (
-    <Button
-      color="#16201C"
-      leftSection={<IconDownload size={16} />}
-      disabled={!done}
-      loading={exp.isPending}
-    >
+    <Button color="#16201C" leftSection={<IconDownload size={16} />} disabled={!done} loading={exp.isPending}>
       Выгрузить комплект
     </Button>
   );
@@ -311,7 +306,11 @@ function BatchExport({ batch }: { batch: Batch }) {
       </Tooltip>
     );
   const formats: { f: "xlsx" | "csv" | "json" | "application"; label: string; hint?: string }[] = [
-    { f: "application", label: "Для заявки (xlsx)", hint: "код, наименование и характеристики — для закупочной документации" },
+    {
+      f: "application",
+      label: "Для заявки (xlsx)",
+      hint: "код, наименование и характеристики — для закупочной документации",
+    },
     { f: "xlsx", label: "Excel (xlsx)" },
     { f: "csv", label: "CSV" },
     { f: "json", label: "JSON" },

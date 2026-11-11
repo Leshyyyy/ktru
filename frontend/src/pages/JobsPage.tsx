@@ -112,9 +112,7 @@ function JobsList() {
                       <Text fw={500} lineClamp={1}>
                         {job.filename}
                       </Text>
-                      {job.batch_id && (
-                        <BatchLink batchId={job.batch_id} onClick={(e) => e.stopPropagation()} />
-                      )}
+                      {job.batch_id && <BatchLink batchId={job.batch_id} onClick={(e) => e.stopPropagation()} />}
                     </Group>
                     <Text size="xs" c="dimmed">
                       {job.total_items
@@ -217,11 +215,7 @@ function BatchesList() {
                   </Table.Tr>
                 ))}
               {data?.items.map((b) => (
-                <Table.Tr
-                  key={b.batch_id}
-                  className="row-clickable"
-                  onClick={() => navigate(`/batches/${b.batch_id}`)}
-                >
+                <Table.Tr key={b.batch_id} className="row-clickable" onClick={() => navigate(`/batches/${b.batch_id}`)}>
                   <Table.Td style={{ overflowWrap: "anywhere" }}>
                     <Group gap={6} align="center">
                       <IconPackages size={18} color="var(--k-primary)" />
@@ -281,8 +275,7 @@ function BatchesList() {
 }
 
 export const batchTitle = (b: { name?: string | null; jobs: Job[] }) =>
-  b.name?.trim() ||
-  (b.jobs.length ? b.jobs.map((j) => j.filename).join(", ") : "Комплект");
+  b.name?.trim() || (b.jobs.length ? b.jobs.map((j) => j.filename).join(", ") : "Комплект");
 
 function BatchProgress({ batch }: { batch: Batch }) {
   const done = batch.processed_items + batch.failed_items;
@@ -305,7 +298,12 @@ function BatchZones({ summary }: { summary: Batch["summary"] }) {
   const t = useThresholds();
   const zones: { n: number; color: string; label: string; hint: string }[] = [
     { n: summary.green ?? 0, color: "var(--k-hi)", label: "зелёные", hint: `уверенность от ${pct(t.green)}` },
-    { n: summary.yellow ?? 0, color: "var(--k-mid)", label: "жёлтые", hint: `уверенность ${pct(t.yellow)}–${pct(t.green)}` },
+    {
+      n: summary.yellow ?? 0,
+      color: "var(--k-mid)",
+      label: "жёлтые",
+      hint: `уверенность ${pct(t.yellow)}–${pct(t.green)}`,
+    },
     { n: summary.red ?? 0, color: "var(--k-lo)", label: "красные", hint: `уверенность ниже ${pct(t.yellow)}` },
   ];
   return (
@@ -314,7 +312,9 @@ function BatchZones({ summary }: { summary: Batch["summary"] }) {
         <Tooltip key={z.label} label={z.hint}>
           <Group gap={4} wrap="nowrap">
             <Box w={8} h={8} style={{ borderRadius: 2, background: z.color, flex: "none" }} aria-hidden />
-            <Text size="xs" className="tabular">{z.n}</Text>
+            <Text size="xs" className="tabular">
+              {z.n}
+            </Text>
           </Group>
         </Tooltip>
       ))}

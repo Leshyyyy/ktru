@@ -39,14 +39,7 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiRequestError } from "../api/client";
-import {
-  useClassify,
-  useConfig,
-  useCreateBatch,
-  useCreateJob,
-  useHealth,
-  useUploadFile,
-} from "../api/hooks";
+import { useClassify, useConfig, useCreateBatch, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
 import type { ClassifyResult, ColumnRole, FileInfo, JobCreate, Sheet } from "../api/types";
 import { ConfidenceBadge, KtruCode } from "../components/badges";
 import { fileSize, pct, plural, ROLE } from "../lib/format";
@@ -436,9 +429,7 @@ function MultiFileFlow() {
       const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       upload.mutate(file, {
         onSuccess: (info) =>
-          setFiles((prev) =>
-            prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p)),
-          ),
+          setFiles((prev) => prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p))),
         onError: (e) =>
           setFiles((prev) =>
             prev.map((p) => (p.id === id ? { ...p, state: "error", message: (e as Error).message } : p)),
@@ -478,7 +469,8 @@ function MultiFileFlow() {
     const body = { name: name.trim() || null, jobs };
     createBatch.mutate(body, {
       onSuccess: (batch) => navigate(`/batches/${batch.batch_id}`),
-      onError: (e) => notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message }),
+      onError: (e) =>
+        notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message }),
     });
   };
 
@@ -491,7 +483,10 @@ function MultiFileFlow() {
           notifications.show({
             color: "red",
             title: "Файл не подходит",
-            message: code === "file-too-large" ? "Файл больше 50 МБ. Разбейте его на части." : "Поддерживаются файлы xlsx, csv и pdf.",
+            message:
+              code === "file-too-large"
+                ? "Файл больше 50 МБ. Разбейте его на части."
+                : "Поддерживаются файлы xlsx, csv и pdf.",
           });
         }}
         maxSize={50 * 1024 * 1024}
@@ -515,7 +510,8 @@ function MultiFileFlow() {
               Перетащите несколько файлов или нажмите, чтобы выбрать
             </Text>
             <Text size="sm" c="dimmed" mt={6}>
-              До {config?.limits.max_files_per_batch ?? 10} файлов xlsx, csv или pdf — они обработаются как один комплект
+              До {config?.limits.max_files_per_batch ?? 10} файлов xlsx, csv или pdf — они обработаются как один
+              комплект
             </Text>
           </div>
         </Group>
@@ -528,7 +524,10 @@ function MultiFileFlow() {
             {files.map((p) => (
               <Group key={p.id} justify="space-between" wrap="nowrap" gap="sm">
                 <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
-                  <IconFileSpreadsheet size={16} className={p.state === "error" ? "k-ico-err" : p.state === "ok" ? "k-ico-ok" : "k-ico-dim"} />
+                  <IconFileSpreadsheet
+                    size={16}
+                    className={p.state === "error" ? "k-ico-err" : p.state === "ok" ? "k-ico-ok" : "k-ico-dim"}
+                  />
                   <Text size="sm" lineClamp={1}>
                     {p.file.name}
                   </Text>
@@ -585,9 +584,21 @@ function MultiFileFlow() {
           <Card>
             <Group justify="space-between" wrap="wrap" gap="md">
               <Text size="sm" c="dimmed">
-                {hasError ? "Есть файлы, которые не загрузились." : uploading ? "Загружается…" : invalidFile ? "Проверьте роли колонок в помеченных файлах." : `${ready.length} ${plural(ready.length, "файл готов", "файла готовы", "файлов готово")} к запуску`}
+                {hasError
+                  ? "Есть файлы, которые не загрузились."
+                  : uploading
+                    ? "Загружается…"
+                    : invalidFile
+                      ? "Проверьте роли колонок в помеченных файлах."
+                      : `${ready.length} ${plural(ready.length, "файл готов", "файла готовы", "файлов готово")} к запуску`}
               </Text>
-              <Button size="md" leftSection={<IconPlayerPlay size={18} />} onClick={start} disabled={!allConfigured || !!invalidFile || hasError || uploading || notReady} loading={createBatch.isPending}>
+              <Button
+                size="md"
+                leftSection={<IconPlayerPlay size={18} />}
+                onClick={start}
+                disabled={!allConfigured || !!invalidFile || hasError || uploading || notReady}
+                loading={createBatch.isPending}
+              >
                 Запустить обработку комплекта
               </Button>
             </Group>
@@ -636,9 +647,13 @@ function MultiSheetEditor({
           {info.filename}
         </Text>
         {confident ? (
-          <Text size="xs" c="var(--k-hi-ink)">роли определены ✓</Text>
+          <Text size="xs" c="var(--k-hi-ink)">
+            роли определены ✓
+          </Text>
         ) : (
-          <Text size="xs" c="var(--k-mid-ink)">проверьте роли</Text>
+          <Text size="xs" c="var(--k-mid-ink)">
+            проверьте роли
+          </Text>
         )}
       </UnstyledButton>
       {open && (
@@ -658,7 +673,11 @@ function MultiSheetEditor({
               <Table.Thead>
                 <Table.Tr>
                   {sheet.columns.map((c) => (
-                    <Table.Th key={c.index} miw={160} bg={mapping[c.index] === "name" ? "var(--mantine-primary-color-light)" : undefined}>
+                    <Table.Th
+                      key={c.index}
+                      miw={160}
+                      bg={mapping[c.index] === "name" ? "var(--mantine-primary-color-light)" : undefined}
+                    >
                       <Stack gap={6} py={4}>
                         <Select
                           size="xs"
@@ -682,7 +701,9 @@ function MultiSheetEditor({
                   <Table.Tr key={r}>
                     {sheet.columns.map((c) => (
                       <Table.Td key={c.index} c={mapping[c.index] === "ignore" ? "dimmed" : undefined}>
-                        <Text size="sm" lineClamp={2}>{row[c.index]}</Text>
+                        <Text size="sm" lineClamp={2}>
+                          {row[c.index]}
+                        </Text>
                       </Table.Td>
                     ))}
                   </Table.Tr>
@@ -690,7 +711,11 @@ function MultiSheetEditor({
               </Table.Tbody>
             </Table>
           </ScrollArea>
-          {error && <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>{error}</Alert>}
+          {error && (
+            <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
+              {error}
+            </Alert>
+          )}
         </Stack>
       )}
     </Card>

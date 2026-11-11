@@ -29,7 +29,13 @@ const RATE = 12; // позиций в секунду
 const QUEUED_MS = 600;
 const PARSING_MS = 900;
 const THRESHOLDS = { green: 0.85, yellow: 0.5 };
-const LIMITS = { max_file_mb: 50, max_rows: 5000, max_items_per_job: 1000, classify_max_items: 20, max_files_per_batch: 10 };
+const LIMITS = {
+  max_file_mb: 50,
+  max_rows: 5000,
+  max_items_per_job: 1000,
+  classify_max_items: 20,
+  max_files_per_batch: 10,
+};
 
 // ---------------------------------------------------------------- хранилище
 
@@ -450,13 +456,23 @@ function prepareJob(body: unknown):
   const f = files.get(b.file_id);
   if (!f)
     return {
-      error: { status: 404, code: "not_found", message: "Файл не найден. Загрузите его ещё раз.", details: { object: "file" } },
+      error: {
+        status: 404,
+        code: "not_found",
+        message: "Файл не найден. Загрузите его ещё раз.",
+        details: { object: "file" },
+      },
     };
   const mapping = b.column_mapping;
   const count = (r: string) => mapping.filter((m) => m.role === r).length;
   if (count("name") !== 1)
     return {
-      error: { status: 422, code: "mapping_invalid", message: "Выберите ровно одну колонку с наименованием товара.", details: null },
+      error: {
+        status: 422,
+        code: "mapping_invalid",
+        message: "Выберите ровно одну колонку с наименованием товара.",
+        details: null,
+      },
     };
   if (count("quantity") > 1 || count("unit") > 1)
     return {
@@ -643,12 +659,10 @@ const routes: [string, string, Handler][] = [
       if (!body?.jobs || !Array.isArray(body.jobs) || body.jobs.length === 0)
         return err(400, "invalid_request", "Некорректный запрос: нужен непустой список jobs.", { field: "jobs" });
       if (body.jobs.length > LIMITS.max_files_per_batch)
-        return err(
-          422,
-          "limit_exceeded",
-          `Не больше ${LIMITS.max_files_per_batch} файлов в одном комплекте.`,
-          { max_files_per_batch: LIMITS.max_files_per_batch, found: body.jobs.length },
-        );
+        return err(422, "limit_exceeded", `Не больше ${LIMITS.max_files_per_batch} файлов в одном комплекте.`, {
+          max_files_per_batch: LIMITS.max_files_per_batch,
+          found: body.jobs.length,
+        });
       type Prepared = Extract<ReturnType<typeof prepareJob>, { data: unknown }>["data"];
       const prepared: Prepared[] = [];
       for (let i = 0; i < body.jobs.length; i++) {
@@ -965,21 +979,56 @@ const routes: [string, string, Handler][] = [
       };
       const base = (batch.name?.trim() || "комплект").replace(/[\\/:*?"<>|]/g, "-");
       if (format === "application") {
-        const cols = ["Файл-источник", "№", "Исходное наименование", "Код КТРУ", "Характеристика", "Значение", "Ед.", "Обязательная", "Источник значения"];
+        const cols = [
+          "Файл-источник",
+          "№",
+          "Исходное наименование",
+          "Код КТРУ",
+          "Характеристика",
+          "Значение",
+          "Ед.",
+          "Обязательная",
+          "Источник значения",
+        ];
         const csv = [cols, ...appRows].map((r) => r.map(csvCell).join(";")).join("\r\n");
         return new Response("﻿" + csv, {
-          headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": disposition(`${base}_заявка.csv`) },
+          headers: {
+            ...headers,
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": disposition(`${base}_заявка.csv`),
+          },
         });
       }
       if (format === "json") {
-        return new Response(JSON.stringify(rows.map((r) => Object.fromEntries(["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"].map((c, i) => [c, r[i]]))), null, 2), {
-          headers: { ...headers, "Content-Type": "application/json", "Content-Disposition": disposition(`${base}_КТРУ.json`) },
-        });
+        return new Response(
+          JSON.stringify(
+            rows.map((r) =>
+              Object.fromEntries(
+                ["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"].map((c, i) => [c, r[i]]),
+              ),
+            ),
+            null,
+            2,
+          ),
+          {
+            headers: {
+              ...headers,
+              "Content-Type": "application/json",
+              "Content-Disposition": disposition(`${base}_КТРУ.json`),
+            },
+          },
+        );
       }
       // В демо xlsx не собираем: отдаём csv, который Excel открывает так же.
-      const csv = [["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"], ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+      const csv = [["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"], ...rows]
+        .map((r) => r.map(csvCell).join(";"))
+        .join("\r\n");
       return new Response("﻿" + csv, {
-        headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": disposition(`${base}_КТРУ.csv`) },
+        headers: {
+          ...headers,
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": disposition(`${base}_КТРУ.csv`),
+        },
       });
     },
   ],
