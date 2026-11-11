@@ -1,9 +1,10 @@
 """Тег jobs: GET /jobs/{id}/export — исходные колонки плюс код, наименование, уверенность, статус, источник
 и предупреждения (FR-7.1, FR-7.2).
 
-Файл собирает backend/files (export_job_results): формат, экранирование формул, имя файла по RFC 5987.
-Здесь — проверка статуса задачи, итоговые коды из v_item_final и заголовок X-Unreviewed-Count. До 1000 позиций
-выгрузка формируется синхронно (замер — в описании PR).
+Обычные форматы собирает backend/files (export_job_results): формат, экранирование формул, имя файла по RFC 5987.
+`application` пока собирает `backend.core.application_export` — временная замена, пока файловый модуль не умеет
+этот формат. Здесь — проверка статуса задачи, итоговые коды из v_item_final, характеристики и заголовки
+X-Unreviewed-Count / X-Missing-Required-Count. До 1000 позиций выгрузка формируется синхронно.
 """
 
 from __future__ import annotations
@@ -17,9 +18,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.core import models
+from backend.core.application_export import export_application
+from backend.core.characteristics import load_characteristics
 from backend.core.processing import ACTIVE_STATUSES
 from backend.core.settings import Settings
 from backend.files import UnreviewedItemsError, export_job_results
+from backend.files.exceptions import UnsupportedTypeError
 
 from ..deps import get_db, get_settings
 from ..errors import ApiError, invalid_state, not_found
@@ -36,7 +40,7 @@ def export_job(
     job_id: uuid.UUID,
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[Session, Depends(get_db)],
-    export_format: Annotated[Literal["source", "xlsx", "csv", "json"], Query(alias="format")] = "source",
+    export_format: Annotated[Literal["source", "xlsx", "csv", "json", "application"], Query(alias="format")] = "source",
     allow_unreviewed: bool = True,
 ) -> Response:
     found = session.execute(
@@ -52,17 +56,29 @@ def export_job(
         raise invalid_state(message, status=job.status)
 
     mapping = job.column_mapping
+    items = _export_items(session, job_id, mapping)
+    missing_required = sum(1 for item in items if (item["missing_required_count"] or 0) > 0)
     try:
-        result = export_job_results(
-            _export_items(session, job_id),
-            headers=_headers(source, mapping.get("sheet")),
-            export_format=export_format,
-            original_filename=source.filename,
-            source_path=settings.upload_dir / source.storage_path,
-            sheet_name=mapping.get("sheet"),
-            allow_unreviewed=allow_unreviewed,
-            header_row=mapping.get("header_row", 0),
-        )
+        try:
+            result = export_job_results(
+                items,
+                headers=_headers(source, mapping.get("sheet")),
+                export_format=export_format,
+                original_filename=source.filename,
+                source_path=settings.upload_dir / source.storage_path,
+                sheet_name=mapping.get("sheet"),
+                allow_unreviewed=allow_unreviewed,
+                header_row=mapping.get("header_row", 0),
+            )
+        except UnsupportedTypeError:
+            # backend/files ещё не умеет application; временная сборка на стороне API.
+            if export_format != "application":
+                raise
+            result = export_application(
+                items,
+                original_filename=source.filename,
+                allow_unreviewed=allow_unreviewed,
+            )
     except UnreviewedItemsError as e:
         details = e.details if isinstance(e.details, dict) else None
         raise ApiError(409, "unreviewed_items", e.message, details) from None
@@ -70,17 +86,23 @@ def export_job(
     return Response(
         content=result.content,
         media_type=result.media_type,
-        headers={"Content-Disposition": result.content_disposition, "X-Unreviewed-Count": str(result.unreviewed_count)},
+        headers={
+            "Content-Disposition": result.content_disposition,
+            "X-Unreviewed-Count": str(result.unreviewed_count),
+            "X-Missing-Required-Count": str(missing_required),
+        },
     )
 
 
-def _export_items(session: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
+def _export_items(session: Session, job_id: uuid.UUID, mapping: dict[str, Any]) -> list[dict[str, Any]]:
     final = models.v_item_final
     rows = session.execute(
         select(
             models.Item.id,
             models.Item.row_index,
             models.Item.raw_row,
+            models.Item.raw_text,
+            models.Item.extracted,
             models.Item.status,
             models.Item.flags,
             models.Item.error,
@@ -93,11 +115,21 @@ def _export_items(session: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
         .where(models.Item.job_id == job_id)
         .order_by(models.Item.row_index)
     ).all()
+    states = load_characteristics(session, [row.id for row in rows])
+    role_indexes = {column["role"]: column["index"] for column in mapping.get("columns", [])}
+
+    def raw_field(row: Any, role: str) -> str | None:
+        index = role_indexes.get(role)
+        return row.raw_row[index] if index is not None and index < len(row.raw_row) else None
+
     return [
         {
             "item_id": row.id,
             "row_index": row.row_index,
             "raw_row": row.raw_row,
+            "raw_name": raw_field(row, "name") or (row.extracted or {}).get("name") or row.raw_text,
+            "raw_text": row.raw_text,
+            "unit": raw_field(row, "unit") or (row.extracted or {}).get("unit"),
             "ktru_code": row.ktru_code,
             "ktru_name": row.name,
             # Из колонки real приходит 0.9399999976 — в json это попало бы как есть.
@@ -106,6 +138,8 @@ def _export_items(session: Session, job_id: uuid.UUID) -> list[dict[str, Any]]:
             "source": row.source if row.ktru_code else None,
             "flags": row.flags,
             "error": row.error,
+            "characteristics": states[row.id]["characteristics"],
+            "missing_required_count": states[row.id]["missing_required_count"],
         }
         for row in rows
     ]

@@ -1,4 +1,7 @@
-import type { Band, BatchStatus, ColumnRole, ItemFlag, ItemStatus, JobStatus } from "../api/types";
+import type { Band, BatchStatus, ColumnRole, ItemCharacteristic, ItemFlag, ItemStatus, JobStatus } from "../api/types";
+
+/** Статус характеристики итогового кода позиции (GET /items/{id}/characteristics). */
+export type CharStatus = ItemCharacteristic["status"];
 
 /**
  * Проценты округляем вниз, а не к ближайшему: уверенность 0.846 — это «84%». Иначе жёлтая позиция показывалась
@@ -65,6 +68,17 @@ export const FLAG: Record<ItemFlag, { label: string; short: string; hint: string
     short: "атрибуты неуверенно",
     hint: "Наименование, бренд или модель извлечены с низкой уверенностью.",
   },
+};
+
+/**
+ * Статус характеристики итогового кода. Цвет — фон и тёмный текст плашки (не единственный носитель смысла:
+ * рядом всегда слово). filled — значение ввёл человек; match/mismatch — найдено в тексте; missing — не заполнено.
+ */
+export const CHAR_STATUS: Record<CharStatus, { label: string; bg: string; ink: string }> = {
+  match: { label: "Подходит", bg: "var(--k-hi-bg)", ink: "var(--k-hi-ink)" },
+  mismatch: { label: "Не подходит", bg: "var(--k-mid-bg)", ink: "var(--k-mid-ink)" },
+  missing: { label: "Не заполнена", bg: "var(--k-lo-bg)", ink: "var(--k-lo-ink)" },
+  filled: { label: "Заполнена вручную", bg: "var(--k-cor-bg)", ink: "var(--k-cor)" },
 };
 
 export const ROLE: Record<ColumnRole, string> = {

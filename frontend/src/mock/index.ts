@@ -56,6 +56,8 @@ type ItemRec = {
   result: MockResult;
   readyAt: number;
   decisions: Decision[];
+  /** Введённые пользователем значения характеристик: ktru_code → имя → значение (null убирает). */
+  charValues: Map<string, Map<string, string | null>>;
 };
 type FileRec = { file_id: string; filename: string; size: number; sha: string; sheets: ParsedSheet[]; info: FileInfo };
 type JobRec = {
@@ -125,26 +127,33 @@ function finalCodeOf(it: ItemRec, job: JobRec): string | null {
 
 /**
  * Характеристики итогового кода. Как в контракте: если код среди предсказаний — статусы из его
- * `characteristic_matches`; иначе (код выбран вручную) — из каталога с `found = null`.
+ * `characteristic_matches`; иначе (код выбран вручную) — из каталога с `found = null`. Сверху — значения,
+ * введённые пользователем через PUT.
  */
 function charList(it: ItemRec, code: string): ItemCharacteristic[] {
   const pred = it.result.predictions.find((p) => p.ktru_code === code);
   const cat = byCode.get(code);
-  return (cat?.characteristics ?? [])
-    .map((c): ItemCharacteristic => {
-      const m = pred?.characteristic_matches?.find((x) => x.name === c.name);
-      const found = m?.found ?? null;
-      return {
-        name: c.name,
-        required: c.required,
-        expected: c.values.join("; "),
-        allowed_values: c.values,
-        found,
-        value: null,
-        status: m?.status ?? "missing",
-      };
-    })
-    .filter((c) => c.required || c.found != null);
+  const userValues = it.charValues.get(code);
+  return (
+    (cat?.characteristics ?? [])
+      .map((c): ItemCharacteristic => {
+        const m = pred?.characteristic_matches?.find((x) => x.name === c.name);
+        const value = userValues?.get(c.name) ?? null;
+        const found = m?.found ?? null;
+        const status: ItemCharacteristic["status"] = value != null ? "filled" : (m?.status ?? "missing");
+        return {
+          name: c.name,
+          required: c.required,
+          expected: c.values.join("; "),
+          allowed_values: c.values,
+          found,
+          value,
+          status,
+        };
+      })
+      // Обязательные, найденные в тексте или введённые пользователем — остальные не показываем.
+      .filter((c) => c.required || c.found != null || c.value != null)
+  );
 }
 
 function charView(it: ItemRec): ItemCharacteristics {
@@ -312,6 +321,7 @@ function createJob(opts: {
       result: classify(raw_text, columns),
       readyAt: parsedAt + (i + 1) * (1000 / RATE),
       decisions: [],
+      charValues: new Map(),
     };
     job.items.push(it);
     items.set(it.item_id, it);
@@ -855,10 +865,7 @@ const routes: [string, string, Handler][] = [
         ];
       });
       const base = job.filename.replace(/\.[^.]+$/, "");
-      const headers = {
-        "X-Unreviewed-Count": String(unreviewed),
-        "X-Missing-Required-Count": String(missingRequired),
-      };
+      const headers = { "X-Unreviewed-Count": String(unreviewed), "X-Missing-Required-Count": String(missingRequired) };
       if (format === "application") {
         // «Для заявки»: строка на характеристику итогового кода, как описано в openapi.yaml /export.
         const cols = [
@@ -881,16 +888,23 @@ const routes: [string, string, Handler][] = [
             return;
           }
           for (const c of ch.characteristics) {
+            const missingRequired = c.required && c.value == null && c.found == null;
             rows.push([
               String(i + 1),
               it.raw_text,
               ch.ktru_code,
               ch.name ?? "",
               c.name,
-              c.value ?? c.found ?? (c.required ? "не заполнено" : ""),
+              c.value ?? c.found ?? "",
               unit,
               c.required ? "да" : "нет",
-              c.value != null ? "пользователь" : c.found != null ? "текст позиции" : "",
+              missingRequired
+                ? "не заполнено"
+                : c.value != null
+                  ? "пользователь"
+                  : c.found != null
+                    ? "текст позиции"
+                    : "",
             ]);
           }
         });
@@ -1086,6 +1100,53 @@ const routes: [string, string, Handler][] = [
         at: Date.now(),
       });
       return json(itemView(it));
+    },
+  ],
+
+  [
+    "GET",
+    "/items/:item_id/characteristics",
+    ({ params }) => {
+      const it = items.get(params.item_id);
+      return it ? json(charView(it)) : notFound("item", "Позиция не найдена.");
+    },
+  ],
+
+  [
+    "PUT",
+    "/items/:item_id/characteristics",
+    async ({ params, req }) => {
+      const it = items.get(params.item_id);
+      if (!it) return notFound("item", "Позиция не найдена.");
+      const body = await req.json().catch(() => null);
+      const current = charView(it);
+      if (!current.ktru_code || !body?.ktru_code || body.ktru_code !== current.ktru_code)
+        return err(409, "invalid_state", "Код позиции успели сменить. Обновите страницу и попробуйте снова.", {
+          status: "invalid_state",
+        });
+      const values = body.values;
+      if (!values || typeof values !== "object" || Object.keys(values).length === 0)
+        return err(400, "invalid_request", "Некорректный запрос: нужно поле values с хотя бы одной характеристикой.", {
+          field: "values",
+        });
+      // Допустимы имена характеристик кода из каталога (включая необязательные, которых нет в сверке текста).
+      const catalog = byCode.get(body.ktru_code);
+      const known = new Set((catalog?.characteristics ?? []).map((c) => c.name));
+      for (const name of Object.keys(values)) {
+        if (!known.has(name))
+          return err(400, "invalid_request", `Характеристики «${name}» нет у этого кода.`, { field: name });
+      }
+      let codeValues = it.charValues.get(body.ktru_code);
+      if (!codeValues) {
+        codeValues = new Map();
+        it.charValues.set(body.ktru_code, codeValues);
+      }
+      for (const [name, value] of Object.entries(values as Record<string, string | null>)) {
+        // Значения обрезаются по краям; пустая строка снимает введённое значение.
+        const v = value?.trim() ?? null;
+        codeValues.set(name, v === "" ? null : v);
+      }
+      return json(charView(it));
     },
   ],
 

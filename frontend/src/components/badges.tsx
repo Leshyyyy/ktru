@@ -2,7 +2,7 @@ import { Group, Text, Tooltip } from "@mantine/core";
 import { IconAlertTriangle, IconCheck } from "@tabler/icons-react";
 import type { BatchStatus, ItemFlag, ItemStatus, JobStatus } from "../api/types";
 import { useConfig } from "../api/hooks";
-import { BAND, BATCH_STATUS, bandOf, FLAG, ITEM_STATUS, JOB_STATUS, pct } from "../lib/format";
+import { BAND, BATCH_STATUS, bandOf, FLAG, ITEM_STATUS, JOB_STATUS, pct, plural } from "../lib/format";
 import classes from "./badges.module.css";
 
 const DEFAULT_T = { green: 0.85, yellow: 0.5 };
@@ -116,6 +116,16 @@ export function FlagsIcon({ flags }: { flags: ItemFlag[] | undefined }) {
         <IconAlertTriangle size={16} />
       </Group>
     </Tooltip>
+  );
+}
+
+/** «N обязательных не заполнено» — признак позиции в таблице. Текст всегда рядом, цвет не единственный носитель смысла. */
+export function MissingRequiredBadge({ count }: { count: number }) {
+  return (
+    <span className={classes.missReq}>
+      <IconAlertTriangle size={11} stroke={2.2} />
+      {count} {plural(count, "обязательная не заполнена", "обязательные не заполнены", "обязательных не заполнено")}
+    </span>
   );
 }
 

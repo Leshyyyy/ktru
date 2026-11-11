@@ -17,12 +17,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from backend.core import models
+from backend.core.characteristics import load_characteristics
 from backend.core.settings import Settings
 from contracts.ml_contracts import normalize_text
 
 from .. import schemas
 from ..deps import get_db, get_settings
-from ..errors import invalid_state, not_found
+from ..errors import ApiError, invalid_state, not_found
 from ..views import ItemFilters, item_page, item_views, real_literal
 
 router = APIRouter(tags=["items"])
@@ -43,11 +44,14 @@ def list_items(
     q: Annotated[str | None, Query(max_length=200)] = None,
     flag: schemas.ItemFlag | None = None,
     group_id: uuid.UUID | None = None,
+    missing_required: bool = False,
     sort: Literal["row_index", "confidence_asc"] = "row_index",
 ) -> schemas.ItemList:
     if not session.scalar(select(exists().where(models.Job.id == job_id))):
         raise not_found("job", "Задача не найдена.")
-    filters = ItemFilters(band=band, status=status, q=q, flag=flag, group_id=group_id, sort=sort)
+    filters = ItemFilters(
+        band=band, status=status, q=q, flag=flag, group_id=group_id, sort=sort, missing_required=missing_required
+    )
     return item_page(session, settings, job_id, filters, page, page_size)
 
 
@@ -140,6 +144,36 @@ def confirm_bulk(job_id: uuid.UUID, body: schemas.BulkConfirm, session: SessionD
         session.execute(update(models.Item).where(models.Item.id.in_([i for i, _ in rows])).values(status="confirmed"))
         session.commit()
     return schemas.BulkConfirmResult(confirmed_count=len(rows))
+
+
+@router.get("/items/{item_id}/characteristics", response_model=schemas.ItemCharacteristics)
+def get_characteristics(item_id: uuid.UUID, session: SessionDep) -> schemas.ItemCharacteristics:
+    result = load_characteristics(session, [item_id]).get(item_id)
+    if result is None:
+        raise not_found("item", "Позиция не найдена.")
+    return schemas.ItemCharacteristics.model_validate(result)
+
+
+@router.put("/items/{item_id}/characteristics", response_model=schemas.ItemCharacteristics)
+def put_characteristics(
+    item_id: uuid.UUID, body: schemas.ItemCharacteristicsUpdate, session: SessionDep
+) -> schemas.ItemCharacteristics:
+    _lock_item(session, item_id)
+    current = load_characteristics(session, [item_id])[item_id]
+    if current["ktru_code"] is None or body.ktru_code != current["ktru_code"]:
+        raise invalid_state("Код позиции изменился или ещё не определён. Обновите карточку.")
+    for name in body.values:
+        if name not in current["allowed_names"]:
+            raise ApiError(400, "invalid_request", "У выбранного кода нет такой характеристики.", {"field": name})
+    session.add_all(
+        models.ItemCharacteristicValue(item_id=item_id, ktru_code=body.ktru_code, name=name, value=value)
+        for name, value in body.values.items()
+    )
+    session.flush()
+    # Ответ фиксируется под той же блокировкой, до конкурентной смены кода.
+    result = schemas.ItemCharacteristics.model_validate(load_characteristics(session, [item_id])[item_id])
+    session.commit()
+    return result
 
 
 def _lock_item(session: Session, item_id: uuid.UUID) -> models.Item:
