@@ -1,7 +1,6 @@
 """Быстрый предпросмотр файлов спецификаций (read_file) для POST /files."""
 
 import csv
-import io
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union
 from uuid import UUID, uuid4
@@ -18,8 +17,7 @@ from backend.files.exceptions import (
     LimitExceededError,
     UnsupportedTypeError,
 )
-from backend.files.hash import compute_file_sha256
-from backend.files.roles import suggest_roles
+from backend.files.roles import is_mapping_confident, suggest_roles
 from backend.files.schemas import ColumnInfo, FileInfo, Sheet
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
@@ -107,7 +105,7 @@ def _extract_sheet_from_matrix(
 
     # Собираем данные после заголовка
     data_rows: List[List[str]] = []
-    for row in matrix[header_idx + 1:]:
+    for row in matrix[header_idx + 1 :]:
         # Дополняем строку пустыми ячейками до num_cols при необходимости
         if len(row) < num_cols:
             row = row + [""] * (num_cols - len(row))
@@ -127,19 +125,12 @@ def _extract_sheet_from_matrix(
         return None
 
     # Приводим пустые заголовки к стандартному виду: "Колонка 1", "Колонка 2"...
-    headers = [
-        raw_headers[i] if raw_headers[i] else f"Колонка {i + 1}"
-        for i in range(num_cols)
-    ]
+    headers = [raw_headers[i] if raw_headers[i] else f"Колонка {i + 1}" for i in range(num_cols)]
 
     # Сэмплы для каждой колонки (первые до 5 значений)
     samples_by_col: List[List[str]] = []
     for col_idx in range(num_cols):
-        col_samples = [
-            row[col_idx]
-            for row in data_rows[:10]
-            if col_idx < len(row) and row[col_idx].strip()
-        ]
+        col_samples = [row[col_idx] for row in data_rows[:10] if col_idx < len(row) and row[col_idx].strip()]
         samples_by_col.append(col_samples[:5])
 
     # Определяем роли колонок
@@ -157,6 +148,7 @@ def _extract_sheet_from_matrix(
 
     preview_rows = data_rows[:10]
     row_count = None if is_pdf else len(data_rows)
+    mapping_confident = is_mapping_confident(headers, samples_by_col)
 
     return Sheet(
         name=name,
@@ -164,6 +156,7 @@ def _extract_sheet_from_matrix(
         header_row=header_idx,
         columns=columns,
         preview=preview_rows,
+        mapping_confident=mapping_confident,
     )
 
 

@@ -202,3 +202,37 @@ def suggest_roles(headers: List[str], samples_by_col: List[List[str]]) -> List[C
 
     # Гарантируем, что нет None
     return [r or ColumnRole.IGNORE for r in roles]
+
+
+def is_mapping_confident(
+    headers: List[str],
+    samples_by_col: Optional[List[List[str]]] = None,
+) -> bool:
+    """
+    Определяет уверенность в сопоставлении колонок (Sheet.mapping_confident).
+    По контракту:
+    - Ровно одна колонка удовлетворяет паттерну NAME строго по заголовку (не догадкой по содержимому).
+    - Нет конфликтующих колонок (не более одной QUANTITY и не более одной UNIT по заголовку).
+    """
+    if not headers:
+        return False
+
+    name_count = 0
+    quantity_count = 0
+    unit_count = 0
+
+    for h in headers:
+        if _match_header_pattern(h, ColumnRole.NAME):
+            name_count += 1
+        elif _match_header_pattern(h, ColumnRole.QUANTITY):
+            quantity_count += 1
+        elif _match_header_pattern(h, ColumnRole.UNIT):
+            unit_count += 1
+
+    if name_count != 1:
+        return False
+
+    if quantity_count > 1 or unit_count > 1:
+        return False
+
+    return True
