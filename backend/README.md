@@ -40,7 +40,9 @@ curl -s $API/jobs/$JOB | jq '{status, total_items, processed_items, failed_items
 **4. Позиции** — доступны и во время обработки. Фильтры: `band` (green, yellow, red), `status`, `q`, `flag`,
 `group_id`, `missing_required=true`; `sort=confidence_asc` поднимает наверх спорные и упавшие позиции.
 `missing_required_count` в позиции и `summary.missing_required` в задаче отражают пропуски обязательных
-характеристик итогового кода. `missing_required=false` оставляет список без этого ограничения.
+характеристик итогового кода. `missing_required=false` оставляет список без этого ограничения. Сводка и фильтр
+считают только факт пропуска, без сборки JSONB характеристик, и отключают JIT на свою транзакцию: на 1000 позиций
+это десятки миллисекунд вместо секунд на полной выборке.
 
 ```bash
 curl -s "$API/jobs/$JOB/items?sort=confidence_asc&page_size=10" \

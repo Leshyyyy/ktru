@@ -17,7 +17,7 @@
 | `core/models.py` | SQLAlchemy-модели таблиц `schema.sql` (схему создают миграции, не модели) |
 | `core/catalog.py` | импорт каталога из JSONL (`CatalogRow`) — для migrate и будущего `POST /catalog/import`; `download_catalog` — полный КТРУ через `ml.fetch_catalog`; FR-8.1: `run_catalog_import` (worker-io) и `CatalogSync` (worker-ml: новая версия → `load_version` в потоке → `ready`) |
 | `core/quality.py` | разметка в `eval_samples` (migrate), прогон оценки `run_quality` (worker-ml), зависшие прогоны |
-| `core/characteristics.py` | общая выборка характеристик итогового кода: каталог версии задачи, сверка выбранного предсказания, последние ручные значения и счётчик обязательных пропусков; её используют карточка, фильтр, сводка и экспорт |
+| `core/characteristics.py` | общая выборка характеристик итогового кода: каталог версии задачи, сверка выбранного предсказания, последние ручные значения и счётчик обязательных пропусков; её используют карточка и экспорт, а сводка и фильтр — облегчённый вариант `characteristic_counts`, который только считает пропуски |
 | `core/application_export.py` | временная сборка XLSX «для заявки» (`format=application`): пока `backend/files` не умеет этот формат, маршрут выгрузки вызывает её после `UnsupportedTypeError`; когда генератор появится у Донира, заменяется на его функцию |
 | `core/ml.py` | `load_pipeline()` (stub/real), `catalog_fallback()` — откат на заглушку без каталога, `pipeline_mode()` / `describe_mode()` — режим для `/config` (у конвейера, иначе по переменным), `check_results()` — проверка ответа ML по контракту |
 | `core/readiness.py` | готовность worker-ml в Redis (heartbeat с TTL) |

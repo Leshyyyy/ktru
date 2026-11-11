@@ -13,11 +13,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import REAL, and_, cast, func, literal, select
+from sqlalchemy import REAL, and_, cast, func, literal, select, text
 from sqlalchemy.orm import Session, aliased
 
 from backend.core import models
-from backend.core.characteristics import characteristic_state, load_characteristics
+from backend.core.characteristics import characteristic_counts, load_characteristics
 from backend.core.processing import band_of
 from backend.core.settings import Settings
 
@@ -63,9 +63,12 @@ def _summaries(
 ) -> dict[uuid.UUID, schemas.JobSummary]:
     if not job_ids:
         return {}
+    # JIT на этой выборке компилирует больше, чем экономит: на 1000 позициях он добавлял ~1,3 с к запросу,
+    # который сам выполняется ~30 мс. Отключаем только на транзакцию сводки, остальные запросы не затрагиваем.
+    session.execute(text("SET LOCAL jit = off"))
     top = aliased(models.Prediction)
     green, yellow = real_literal(settings.green_threshold), real_literal(settings.yellow_threshold)
-    characteristics = characteristic_state(job_ids=job_ids)
+    characteristics = characteristic_counts(job_ids=job_ids)
     rows = session.execute(
         select(
             models.Item.job_id,
@@ -152,7 +155,9 @@ def item_page(
         .where(models.Item.job_id == job_id, *_conditions(filters, top, settings))
     )
     if filters.missing_required:
-        characteristics = characteristic_state(job_ids=[job_id])
+        # Та же причина, что в сводке: JIT дороже самого подсчёта пропусков.
+        session.execute(text("SET LOCAL jit = off"))
+        characteristics = characteristic_counts(job_ids=[job_id])
         query = query.join(characteristics, characteristics.c.item_id == models.Item.id).where(
             characteristics.c.missing_required_count > 0
         )

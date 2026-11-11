@@ -123,6 +123,9 @@ def test_fill_trim_clear_optional_and_history(example: tuple[Stack, str, str]) -
     result = _put(stack, item_id, LAPTOP, {"Накопитель": "   ", "Материал": None})
     assert result["missing_required_count"] == 1
     assert _chars(result)["Накопитель"]["status"] == "missing"
+    # Сброс (NULL) возвращает пропуск и в облегчённом счётчике сводки/фильтра, а не только в карточке.
+    assert stack.client.get(f"/api/v1/jobs/{job_id}").json()["summary"]["missing_required"] == 1
+    assert stack.client.get(f"/api/v1/jobs/{job_id}/items", params={"missing_required": "true"}).json()["total"] == 1
     assert "Материал" not in _chars(result)
     _put(stack, item_id, LAPTOP, {"Накопитель": "SSD"})
     result = _put(stack, item_id, LAPTOP, {"Накопитель": ""})
