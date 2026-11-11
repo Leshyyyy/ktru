@@ -24,10 +24,12 @@ import {
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { IconChevronDown, IconDownload } from "@tabler/icons-react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
-import { useBatch, useBatchExport, useItems } from "../api/hooks";
+import { api, unwrap } from "../api/client";
 import type { Batch } from "../api/types";
+import { useBatch, useBatchExport } from "../api/hooks";
 import { BatchStatusBadge, JobStatusBadge } from "../components/badges";
 import { ItemDrawer } from "../components/ItemDrawer";
 import { batchTitle } from "./JobsPage";
@@ -173,23 +175,33 @@ function BatchFileGroup({
   onToggle: () => void;
   onOpenItem: (itemId: string, jobId: string) => void;
 }) {
-  // Контракт: PageSize максимум 200. Грузим страницами по 200 и «Показать ещё» догружает следующие.
+  // Контракт: PageSize максимум 200. Грузим страницами по 200 и «Показать ещё» ДОБАВЛЯЕТ следующие (не заменяет).
   const PAGE = 200;
   const active = ["queued", "parsing", "processing"].includes(job.status);
-  const [page, setPage] = useState(1);
-  const { data, isFetching } = useItems(
-    job.job_id,
-    {
-      page,
-      page_size: PAGE,
-      missing_required: missingOnly || undefined,
-    },
+  const { data, isFetching, fetchNextPage, hasNextPage } = useInfiniteQuery({
+    queryKey: ["batch-items", job.job_id, missingOnly],
+    queryFn: ({ pageParam = 1 }) =>
+      unwrap(
+        api.GET("/jobs/{job_id}/items", {
+          params: {
+            path: { job_id: job.job_id },
+            query: { page: pageParam, page_size: PAGE, missing_required: missingOnly || undefined },
+          },
+        }),
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (last, all) => (last.total > all.length * PAGE ? all.length + 1 : undefined),
     // Во время обработки подтягиваем готовые позиции, как на странице задачи.
-    { refetchInterval: active ? 2000 : false },
-  );
-  const items = data?.items ?? [];
-  const shownCount = page * PAGE;
-  const hasMore = data?.total != null && data.total > shownCount;
+    refetchInterval: active ? 2000 : false,
+  });
+  // Склеиваем страницы и убираем возможные дубли (опрос не должен прибавлять уже показанные позиции).
+  const seen = new Set<string>();
+  const items = (data?.pages ?? [])
+    .flatMap((p) => p.items)
+    .filter((it) => (seen.has(it.item_id) ? false : (seen.add(it.item_id), true)));
+
+  // При фильтре «незаполненные обязательные» пустые группы скрываем — иначе остаются только заголовки файлов.
+  if (missingOnly && items.length === 0) return null;
 
   return (
     <div className="k-batch-group">
@@ -247,9 +259,9 @@ function BatchFileGroup({
               ))}
             </Table.Tbody>
           </Table>
-          {hasMore && (
+          {hasNextPage && (
             <Group justify="center" p="sm">
-              <Button variant="subtle" size="xs" onClick={() => setPage((p) => p + 1)} loading={isFetching}>
+              <Button variant="subtle" size="xs" onClick={() => fetchNextPage()} loading={isFetching}>
                 Показать ещё
               </Button>
             </Group>

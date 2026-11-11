@@ -412,8 +412,9 @@ function MultiFileFlow() {
   const [files, setFiles] = useState<PendingFile[]>([]);
   // Пер-файловая конфигурация: file_id → выбранный лист и сопоставление колонок.
   const [configs, setConfigs] = useState<Record<string, { sheet: string; mapping: Mapping }>>({});
-  // Индекс файла (в запросе к POST /batches), который не прошёл проверку — подсветпить его в списке.
-  const [batchErrorIndex, setBatchErrorIndex] = useState<number | null>(null);
+  // file_id файла, который не прошёл проверку в POST /batches — храним id, а не индекс:
+  // после удаления файла из списка индекс сбился бы, а id остаётся корректным.
+  const [batchErrorFileId, setBatchErrorFileId] = useState<string | null>(null);
 
   const setConfig = (fileId: string, sheet: string, mapping: Mapping) =>
     setConfigs((prev) => ({ ...prev, [fileId]: { sheet, mapping } }));
@@ -463,18 +464,20 @@ function MultiFileFlow() {
     if (!c) return true;
     return validate(c.mapping) !== null;
   });
-  // Файл с ошибкой POST /batches (details.job_index) — номер в запросе, совпадает с порядком в ready.
-  const errFile = batchErrorIndex != null ? ready[batchErrorIndex] : undefined;
+  // Файл с ошибкой POST /batches — по file_id (устойчиво к перестановке списка).
+  const errFile = batchErrorFileId ? ready.find((info) => info.file_id === batchErrorFileId) : undefined;
 
   const removeFile = (id: string) => {
     const p = files.find((f) => f.id === id);
     setFiles((prev) => prev.filter((f) => f.id !== id));
-    if (p?.info)
+    if (p?.info) {
+      if (p.info.file_id === batchErrorFileId) setBatchErrorFileId(null);
       setConfigs((prev) => {
         const next = { ...prev };
         delete next[p.info!.file_id];
         return next;
       });
+    }
   };
 
   const start = () => {
@@ -501,7 +504,8 @@ function MultiFileFlow() {
           e instanceof ApiRequestError && e.details && typeof e.details.job_index === "number"
             ? e.details.job_index
             : null;
-        setBatchErrorIndex(idx);
+        // Запоминаем конкретный file_id на момент запроса, чтобы после удаления файла подсветка не съехала.
+        setBatchErrorFileId(idx != null && ready[idx] ? ready[idx]!.file_id : null);
         notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message });
       },
     });
@@ -618,7 +622,7 @@ function MultiFileFlow() {
                 onClick={() => {
                   setFiles([]);
                   setConfigs({});
-                  setBatchErrorIndex(null);
+                  setBatchErrorFileId(null);
                 }}
                 disabled={uploading}
               >
