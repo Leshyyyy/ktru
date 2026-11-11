@@ -203,4 +203,3 @@ def test_parse_rows_file_matrix_limit_exceeded(tmp_path: Path, monkeypatch):
     with pytest.raises(LimitExceededError) as exc_info:
         parse_rows(csv_file, header_row=0, column_mapping=mapping)
     assert "превышает лимит 10" in exc_info.value.message
-

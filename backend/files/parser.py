@@ -170,7 +170,7 @@ def parse_rows(
     parsed_rows: List[ParsedRow] = []
     total_data_rows_seen = 0
 
-    for current_row_idx, raw_cells in enumerate(raw_matrix[header_row + 1:]):
+    for current_row_idx, raw_cells in enumerate(raw_matrix[header_row + 1 :]):
         # Приводим ячейки к очищенным строкам
         cleaned_cells = [clean_cell(c) for c in raw_cells]
         if len(cleaned_cells) < num_cols:

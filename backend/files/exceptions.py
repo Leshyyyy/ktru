@@ -16,7 +16,9 @@ class FileParsingError(Exception):
 class FileUnreadableError(FileParsingError):
     """Файл повреждён, пуст или в нём отсутствуют читаемые строки данных (422)."""
 
-    def __init__(self, message: str = "Файл пуст или не содержит читаемых строк с данными.", details: Optional[Any] = None) -> None:
+    def __init__(
+        self, message: str = "Файл пуст или не содержит читаемых строк с данными.", details: Optional[Any] = None
+    ) -> None:
         super().__init__(message, code="file_unreadable", details=details)
 
 
@@ -30,7 +32,9 @@ class UnsupportedTypeError(FileParsingError):
 class FileTooLargeError(FileParsingError):
     """Размер файла превышает лимит 50 МБ (413)."""
 
-    def __init__(self, message: str = "Размер файла превышает допустимый лимит 50 МБ.", details: Optional[Any] = None) -> None:
+    def __init__(
+        self, message: str = "Размер файла превышает допустимый лимит 50 МБ.", details: Optional[Any] = None
+    ) -> None:
         super().__init__(message, code="file_too_large", details=details)
 
 
@@ -44,7 +48,11 @@ class MappingInvalidError(FileParsingError):
 class LimitExceededError(FileParsingError):
     """Превышен лимит строк в файле или в задаче (422)."""
 
-    def __init__(self, message: str = "Превышен лимит строк (максимум 1000 строк в задаче или 5000 в файле). Разбейте файл на части.", details: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        message: str = "Превышен лимит строк (максимум 1000 строк в задаче или 5000 в файле). Разбейте файл на части.",
+        details: Optional[Any] = None,
+    ) -> None:
         super().__init__(message, code="limit_exceeded", details=details)
 
 
@@ -58,5 +66,7 @@ class UnreviewedItemsError(FileParsingError):
 class InvalidStateError(FileParsingError):
     """Действие невозможно в текущем статусе задачи (409)."""
 
-    def __init__(self, message: str = "Действие невозможно в текущем статусе задачи.", details: Optional[Any] = None) -> None:
+    def __init__(
+        self, message: str = "Действие невозможно в текущем статусе задачи.", details: Optional[Any] = None
+    ) -> None:
         super().__init__(message, code="invalid_state", details=details)

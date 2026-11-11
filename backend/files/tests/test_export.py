@@ -90,7 +90,7 @@ def test_escape_formula_for_csv():
 def test_format_content_disposition():
     """Проверка формирования заголовка Content-Disposition по RFC 5987 / RFC 6266."""
     header = format_content_disposition("спецификация_2026.xlsx")
-    assert 'attachment; filename=' in header
+    assert "attachment; filename=" in header
     assert "filename*=UTF-8''" in header
     assert "%D1%81%D0%BF%D0%B5%D1%86%D0%B8%D1%84%D0%B8%D0%BA%D0%B0%D1%86%D0%B8%D1%8F" in header
 
@@ -101,6 +101,7 @@ def test_format_content_disposition():
 
     # Запасное имя filename="..." должно состоять только из ASCII (без русских букв)
     import re
+
     match = re.search(r'filename="([^"]+)"', header)
     assert match is not None
     fallback_name = match.group(1)
@@ -173,7 +174,9 @@ def test_export_xlsx_string_cells(sample_headers, sample_export_items):
     # Проверяем, что все ячейки строки имеют строковый тип (не 'f' формула)
     for row in ws.iter_rows():
         for cell in row:
-            assert cell.data_type in ("s", "inlineStr", "str"), f"Ячейка {cell.coordinate} не должна быть формулой, текущий тип: {cell.data_type}"
+            assert cell.data_type in ("s", "inlineStr", "str"), (
+                f"Ячейка {cell.coordinate} не должна быть формулой, текущий тип: {cell.data_type}"
+            )
 
     # Проверяем опасную формулу — она должна сохраниться как обычный текст со строковым типом
     formula_cell = ws.cell(row=6, column=1)
@@ -466,3 +469,315 @@ def test_parse_and_export_roundtrip_xlsx(tmp_path):
     assert ws_res.cell(row=5, column=1).value == "Бумага А4"
     assert ws_res.cell(row=5, column=2).value == "5"
     assert ws_res.cell(row=5, column=3).value == "КОД-Бумага А4"
+
+
+from backend.files.exceptions import UnsupportedTypeError
+from backend.files.export import export_application_xlsx, export_batch_results
+from backend.files.schemas import ItemCharacteristicExport
+
+
+def test_export_application_xlsx_basic():
+    items = [
+        ExportItem(
+            row_index=0,
+            raw_name="Ноутбук игровой",
+            ktru_code="26.20.11.110-00000001",
+            ktru_name="Компьютер портативный",
+            unit="шт",
+            status="confirmed",
+            characteristics=[
+                ItemCharacteristicExport(
+                    name="ОЗУ",
+                    required=True,
+                    found="16 ГБ",
+                    status="match",
+                ),
+                ItemCharacteristicExport(
+                    name="Накопитель",
+                    required=True,
+                    value=None,
+                    found=None,
+                    status="missing",
+                ),
+                ItemCharacteristicExport(
+                    name="Видеокарта",
+                    required=False,
+                    value="RTX 4060",
+                    status="filled",
+                ),
+            ],
+        ),
+        ExportItem(
+            row_index=1,
+            raw_name="Позиция без кода",
+            ktru_code=None,
+            unit="компл",
+            status="failed",
+        ),
+        ExportItem(
+            row_index=2,
+            raw_name="Код без характеристик",
+            ktru_code="17.12.14.110-00000001",
+            ktru_name="Бумага офисная",
+            unit="пачка",
+            status="confirmed",
+            characteristics=[],
+        ),
+    ]
+
+    res = export_application_xlsx(items, original_filename="my_spec.xlsx")
+    assert res.filename == "my_spec_application.xlsx"
+    assert res.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # Позиция 0 имеет незаполненную обязательную характеристику Накопитель
+    assert res.missing_required_count == 1
+
+    wb = openpyxl.load_workbook(io.BytesIO(res.content))
+    ws = wb.active
+    rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    # Заголовок из 9 колонок
+    assert rows[0] == [
+        "№ позиции",
+        "Исходное наименование",
+        "Код КТРУ",
+        "Наименование КТРУ",
+        "Характеристика",
+        "Значение",
+        "Единица измерения",
+        "Обязательная",
+        "Источник значения",
+    ]
+
+    # Строки позиции 0:
+    # 1. ОЗУ
+    assert rows[1] == [
+        "1",
+        "Ноутбук игровой",
+        "26.20.11.110-00000001",
+        "Компьютер портативный",
+        "ОЗУ",
+        "16 ГБ",
+        "шт",
+        "да",
+        "текст позиции",
+    ]
+    # 2. Накопитель (не заполнено)
+    assert rows[2] == [
+        "1",
+        "Ноутбук игровой",
+        "26.20.11.110-00000001",
+        "Компьютер портативный",
+        "Накопитель",
+        None,
+        "шт",
+        "да",
+        "не заполнено",
+    ]
+    # 3. Видеокарта (пользователь)
+    assert rows[3] == [
+        "1",
+        "Ноутбук игровой",
+        "26.20.11.110-00000001",
+        "Компьютер портативный",
+        "Видеокарта",
+        "RTX 4060",
+        "шт",
+        "нет",
+        "пользователь",
+    ]
+
+    # Строка позиции 1 (без кода):
+    assert rows[4] == ["2", "Позиция без кода", None, None, None, None, "компл", None, None]
+
+    # Строка позиции 2 (без характеристик):
+    assert rows[5] == [
+        "3",
+        "Код без характеристик",
+        "17.12.14.110-00000001",
+        "Бумага офисная",
+        None,
+        None,
+        "пачка",
+        None,
+        None,
+    ]
+
+
+def test_export_application_xlsx_formula_safety():
+    items = [
+        ExportItem(
+            row_index=0,
+            raw_name="=CMD|' /C calc'!A0",
+            ktru_code="26.20.11.110-00000001",
+            ktru_name="+SUM(B1:B10)",
+            unit="шт",
+            status="confirmed",
+            characteristics=[
+                ItemCharacteristicExport(
+                    name="Параметр",
+                    required=True,
+                    value="=1+1",
+                    status="filled",
+                ),
+            ],
+        )
+    ]
+    res = export_application_xlsx(items)
+    wb = openpyxl.load_workbook(io.BytesIO(res.content))
+    ws = wb.active
+    # Проверяем, что ячейка со значением формулы имеет строковый тип 's'
+    val_cell = ws.cell(row=2, column=6)
+    assert val_cell.value == "=1+1"
+    assert val_cell.data_type == "s"
+
+    name_cell = ws.cell(row=2, column=2)
+    assert name_cell.value == "=CMD|' /C calc'!A0"
+    assert name_cell.data_type == "s"
+
+
+def test_export_job_results_format_application():
+    items = [
+        ExportItem(
+            row_index=0,
+            raw_name="Монитор",
+            ktru_code="26.20.17.110-00000001",
+            ktru_name="Монитор ЖК",
+            status="confirmed",
+            characteristics=[
+                ItemCharacteristicExport(name="Диагональ", required=True, found="24 дюйма", status="match"),
+            ],
+        )
+    ]
+    res = export_job_results(items, export_format=ExportFormat.APPLICATION, original_filename="test.xlsx")
+    assert res.filename == "test_application.xlsx"
+    assert res.missing_required_count == 0
+    assert res.unreviewed_count == 0
+
+
+def test_export_batch_results_xlsx():
+    items = [
+        ExportItem(
+            source_filename="spec1.xlsx",
+            row_index=0,
+            raw_text="Ноутбук Core i5",
+            ktru_code="26.20.11.110-00000001",
+            ktru_name="Ноутбук",
+            confidence=0.95,
+            status="confirmed",
+            source="user",
+        ),
+        ExportItem(
+            source_filename="spec2.xlsx",
+            row_index=0,
+            raw_text="Принтер лазерный",
+            ktru_code="26.20.16.120-00000002",
+            ktru_name="Принтер",
+            confidence=0.88,
+            status="processed",
+            source="prediction",
+        ),
+    ]
+
+    res = export_batch_results(items, export_format=ExportFormat.XLSX, batch_filename="bundle_march.xlsx")
+    assert res.filename == "bundle_march.xlsx"
+    assert res.unreviewed_count == 1
+
+    wb = openpyxl.load_workbook(io.BytesIO(res.content))
+    ws = wb.active
+    rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    assert rows[0] == [
+        "Файл-источник",
+        "Исходный текст",
+        "Код КТРУ",
+        "Наименование КТРУ",
+        "Уверенность (%)",
+        "Статус",
+        "Источник",
+        "Предупреждения",
+    ]
+    assert rows[1][0] == "spec1.xlsx"
+    assert rows[1][1] == "Ноутбук Core i5"
+    assert rows[1][2] == "26.20.11.110-00000001"
+    assert rows[2][0] == "spec2.xlsx"
+    assert rows[2][1] == "Принтер лазерный"
+
+
+def test_export_batch_results_csv():
+    items = [
+        ExportItem(
+            source_filename="spec1.csv",
+            raw_text="=SUM(A1)",
+            ktru_code="26.20.11.110-00000001",
+            ktru_name="Ноутбук",
+            confidence=0.9,
+            status="confirmed",
+        )
+    ]
+    res = export_batch_results(items, export_format=ExportFormat.CSV, batch_filename="bundle.csv")
+    assert res.filename == "bundle.csv"
+    text = res.content.decode("utf-8-sig")
+    lines = text.strip().splitlines()
+    assert lines[0].startswith("Файл-источник;Исходный текст")
+    # Экранирование формулы в CSV апострофом
+    assert "'=SUM(A1)" in lines[1]
+
+
+def test_export_batch_results_json():
+    items = [
+        ExportItem(
+            source_filename="spec1.xlsx",
+            raw_text="Бумага SvetoCopy",
+            ktru_code="17.12.14.110-00000001",
+            ktru_name="Бумага офисная",
+            confidence=0.98,
+            status="confirmed",
+        )
+    ]
+    res = export_batch_results(items, export_format=ExportFormat.JSON)
+    data = json.loads(res.content.decode("utf-8"))
+    assert len(data) == 1
+    assert data[0]["source_filename"] == "spec1.xlsx"
+    assert data[0]["raw_text"] == "Бумага SvetoCopy"
+    assert data[0]["ktru_code"] == "17.12.14.110-00000001"
+
+
+def test_export_batch_results_application():
+    items = [
+        ExportItem(
+            source_filename="fileA.xlsx",
+            row_index=0,
+            raw_name="Сервер",
+            ktru_code="26.20.14.000-00000001",
+            ktru_name="Сервер стоечный",
+            unit="шт",
+            status="confirmed",
+            characteristics=[
+                ItemCharacteristicExport(name="Процессор", required=True, found="Xeon", status="match"),
+            ],
+        )
+    ]
+    res = export_batch_results(items, export_format=ExportFormat.APPLICATION, batch_filename="batch.xlsx")
+    wb = openpyxl.load_workbook(io.BytesIO(res.content))
+    ws = wb.active
+    rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    # В batch application первой колонкой идет "Файл-источник"
+    assert rows[0][0] == "Файл-источник"
+    assert rows[0][1] == "№ позиции"
+    assert rows[1][0] == "fileA.xlsx"
+    assert rows[1][1] == "1"
+    assert rows[1][2] == "Сервер"
+
+
+def test_export_batch_results_rejects_source_format():
+    items = [ExportItem(raw_text="Товар", status="confirmed")]
+    with pytest.raises(UnsupportedTypeError) as exc_info:
+        export_batch_results(items, export_format="source")
+    assert "не поддерживается для выгрузки комплекта" in str(exc_info.value)
+
+
+def test_export_batch_results_unreviewed_error():
+    items = [ExportItem(raw_text="Товар", status="processed")]
+    with pytest.raises(UnreviewedItemsError):
+        export_batch_results(items, allow_unreviewed=False)
