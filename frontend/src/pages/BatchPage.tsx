@@ -216,11 +216,7 @@ function BatchFileGroup({
             </Table.Thead>
             <Table.Tbody>
               {items.map((it) => (
-                <Table.Tr
-                  key={it.item_id}
-                  className="row-clickable"
-                  onClick={() => onOpenItem(it.item_id, job.job_id)}
-                >
+                <Table.Tr key={it.item_id} className="row-clickable" onClick={() => onOpenItem(it.item_id, job.job_id)}>
                   <Table.Td>
                     <Text size="sm" c="dimmed" className="tabular">
                       {it.row_index + 1}
@@ -244,9 +240,7 @@ function BatchFileGroup({
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" c="dimmed" className="tabular">
-                      {it.extracted?.quantity != null
-                        ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}`
-                        : "—"}
+                      {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
                     </Text>
                   </Table.Td>
                 </Table.Tr>

@@ -435,12 +435,13 @@ function MultiFileFlow() {
       upload
         .mutateAsync(file)
         .then((info) => {
-          setFiles((prev) =>
-            prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p)),
-          );
+          setFiles((prev) => prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p)));
           // Сразу закладываем начальное сопоставление колонок — чтобы уверенные свёрнутые листы не блокировали запуск.
           const first = info.sheets[0];
-          setConfigs((prev) => ({ ...prev, [info.file_id]: { sheet: first?.name ?? "", mapping: initialMapping(first, info) } }));
+          setConfigs((prev) => ({
+            ...prev,
+            [info.file_id]: { sheet: first?.name ?? "", mapping: initialMapping(first, info) },
+          }));
         })
         .catch((e) =>
           setFiles((prev) =>
@@ -468,11 +469,12 @@ function MultiFileFlow() {
   const removeFile = (id: string) => {
     const p = files.find((f) => f.id === id);
     setFiles((prev) => prev.filter((f) => f.id !== id));
-    if (p?.info) setConfigs((prev) => {
-      const next = { ...prev };
-      delete next[p.info!.file_id];
-      return next;
-    });
+    if (p?.info)
+      setConfigs((prev) => {
+        const next = { ...prev };
+        delete next[p.info!.file_id];
+        return next;
+      });
   };
 
   const start = () => {
@@ -496,7 +498,9 @@ function MultiFileFlow() {
       onError: (e) => {
         // POST /batches отвечает 422 с details.job_index, когда не прошла одна из задач — подсветить этот файл.
         const idx =
-          e instanceof ApiRequestError && e.details && typeof e.details.job_index === "number" ? e.details.job_index : null;
+          e instanceof ApiRequestError && e.details && typeof e.details.job_index === "number"
+            ? e.details.job_index
+            : null;
         setBatchErrorIndex(idx);
         notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message });
       },
@@ -559,7 +563,16 @@ function MultiFileFlow() {
                   wrap="nowrap"
                   gap="sm"
                   data-batch-err={isErr || undefined}
-                  style={isErr ? { padding: "6px 10px", border: "1px solid var(--k-lo)", borderRadius: 8, background: "var(--k-lo-bg)" } : undefined}
+                  style={
+                    isErr
+                      ? {
+                          padding: "6px 10px",
+                          border: "1px solid var(--k-lo)",
+                          borderRadius: 8,
+                          background: "var(--k-lo-bg)",
+                        }
+                      : undefined
+                  }
                 >
                   <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
                     <IconFileSpreadsheet
