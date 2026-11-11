@@ -38,13 +38,27 @@ curl -s $API/jobs/$JOB | jq '{status, total_items, processed_items, failed_items
 ```
 
 **4. Позиции** — доступны и во время обработки. Фильтры: `band` (green, yellow, red), `status`, `q`, `flag`,
-`group_id`; `sort=confidence_asc` поднимает наверх спорные и упавшие позиции.
+`group_id`, `missing_required=true`; `sort=confidence_asc` поднимает наверх спорные и упавшие позиции.
+`missing_required_count` в позиции и `summary.missing_required` в задаче отражают пропуски обязательных
+характеристик итогового кода. `missing_required=false` оставляет список без этого ограничения.
 
 ```bash
 curl -s "$API/jobs/$JOB/items?sort=confidence_asc&page_size=10" \
   | jq '.total, (.items[] | {row_index, raw_text, status, band, final: .final.ktru_code, error})'
 ITEM=$(curl -s "$API/jobs/$JOB/items?page_size=1" | jq -r '.items[0].item_id')
 curl -s $API/items/$ITEM | jq '{raw_text, extracted, predictions: [.predictions[] | {rank, ktru_code, name, confidence}]}'
+curl -s "$API/jobs/$JOB/items?missing_required=true" | jq '.total, .items[].missing_required_count'
+```
+
+**Характеристики итогового кода.** GET возвращает обязательные, найденные в тексте необязательные и необязательные
+с ручным значением. PUT принимает имена из каталога выбранного кода; пробелы по краям обрезаются, `null`, пустая
+строка и пробелы снимают ручное значение. Значения сохраняются отдельно для каждого кода позиции.
+
+```bash
+curl -s "$API/items/$ITEM/characteristics" | jq '{ktru_code, missing_required_count, characteristics}'
+CODE=$(curl -s "$API/items/$ITEM/characteristics" | jq -r .ktru_code)
+curl -s -X PUT "$API/items/$ITEM/characteristics" -H 'Content-Type: application/json' \
+  -d '{"ktru_code":"'"$CODE"'","values":{"ОЗУ":"16 ГБ"}}' | jq .missing_required_count
 ```
 
 **5. Решения.** Подтвердить предложенный код, указать свой (код ищется в каталоге задачи), подтвердить всё не ниже
@@ -69,14 +83,20 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE $API/jobs/$JOB   # 204
 ```
 
 **7. Выгрузка** — когда задача завершена (`done`, `done_with_errors`) или отменена. `format`: `source` (как загружен;
-для pdf — xlsx), `xlsx`, `csv`, `json`. Число непроверенных позиций — в заголовке `X-Unreviewed-Count`.
+для pdf — xlsx), `xlsx`, `csv`, `json`, `application` (xlsx для заявки). Число непроверенных позиций — в заголовке
+`X-Unreviewed-Count`, число позиций с незаполненными обязательными характеристиками — в
+`X-Missing-Required-Count`. Пропуски не блокируют выгрузку.
 
 ```bash
 curl -s -D headers.txt -o result.xlsx "$API/jobs/$JOB/export"
-grep -i -E 'x-unreviewed-count|content-disposition' headers.txt
+grep -i -E 'x-unreviewed-count|x-missing-required-count|content-disposition' headers.txt
 curl -s "$API/jobs/$JOB/export?format=json" | jq '.[0]'
+curl -s -o application.xlsx "$API/jobs/$JOB/export?format=application"
 curl -s "$API/jobs/$JOB/export?allow_unreviewed=false" | jq .error   # 409 unreviewed_items, если такие остались
 ```
+
+Файл «для заявки» пока собирает `backend/core/application_export.py`: маршрут вызывает его, если файловый модуль
+ещё не поддерживает `application`. Когда генератор появится в `backend/files`, вызов заменится без изменения API.
 
 **8. Быстрая проверка** — до 20 строк сразу, без задачи и без сохранения (экран загрузки).
 

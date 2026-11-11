@@ -159,6 +159,7 @@ def test_cors(client: TestClient) -> None:
     simple = client.get("/api/v1/_test/items", headers={"Origin": "http://localhost:5173"})
     exposed = simple.headers["access-control-expose-headers"].lower()
     assert "x-unreviewed-count" in exposed
+    assert "x-missing-required-count" in exposed
     assert "content-disposition" in exposed
     foreign = client.get("/api/v1/_test/items", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in foreign.headers

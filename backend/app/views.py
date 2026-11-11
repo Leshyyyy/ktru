@@ -17,12 +17,13 @@ from sqlalchemy import REAL, and_, cast, func, literal, select
 from sqlalchemy.orm import Session, aliased
 
 from backend.core import models
+from backend.core.characteristics import characteristic_state, load_characteristics
 from backend.core.processing import band_of
 from backend.core.settings import Settings
 
 from . import schemas
 
-_EMPTY_SUMMARY = schemas.JobSummary(green=0, yellow=0, red=0, confirmed=0, corrected=0)
+_EMPTY_SUMMARY = schemas.JobSummary(green=0, yellow=0, red=0, confirmed=0, corrected=0, missing_required=0)
 
 
 def real_literal(value: float) -> Any:
@@ -64,6 +65,7 @@ def _summaries(
         return {}
     top = aliased(models.Prediction)
     green, yellow = real_literal(settings.green_threshold), real_literal(settings.yellow_threshold)
+    characteristics = characteristic_state(job_ids=job_ids)
     rows = session.execute(
         select(
             models.Item.job_id,
@@ -72,14 +74,21 @@ def _summaries(
             func.count().filter(top.confidence < yellow).label("red"),
             func.count().filter(models.Item.status == "confirmed").label("confirmed"),
             func.count().filter(models.Item.status == "corrected").label("corrected"),
+            func.count().filter(characteristics.c.missing_required_count > 0).label("missing_required"),
         )
         .outerjoin(top, and_(top.item_id == models.Item.id, top.rank == 1))
+        .join(characteristics, characteristics.c.item_id == models.Item.id)
         .where(models.Item.job_id.in_(job_ids))
         .group_by(models.Item.job_id)
     ).all()
     return {
         row.job_id: schemas.JobSummary(
-            green=row.green, yellow=row.yellow, red=row.red, confirmed=row.confirmed, corrected=row.corrected
+            green=row.green,
+            yellow=row.yellow,
+            red=row.red,
+            confirmed=row.confirmed,
+            corrected=row.corrected,
+            missing_required=row.missing_required,
         )
         for row in rows
     }
@@ -130,6 +139,7 @@ class ItemFilters:
     flag: schemas.ItemFlag | None = None
     group_id: uuid.UUID | None = None
     sort: str = "row_index"
+    missing_required: bool = False
 
 
 def item_page(
@@ -141,6 +151,11 @@ def item_page(
         .outerjoin(top, and_(top.item_id == models.Item.id, top.rank == 1))
         .where(models.Item.job_id == job_id, *_conditions(filters, top, settings))
     )
+    if filters.missing_required:
+        characteristics = characteristic_state(job_ids=[job_id])
+        query = query.join(characteristics, characteristics.c.item_id == models.Item.id).where(
+            characteristics.c.missing_required_count > 0
+        )
     total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
     if filters.sort == "confidence_asc":
         # Позиции без предсказаний (ошибка, ещё не обработана) — сверху: их тоже нужно посмотреть.
@@ -188,13 +203,16 @@ def item_views(session: Session, settings: Settings, item_ids: Sequence[uuid.UUI
         for row in session.execute(select(models.v_item_final).where(models.v_item_final.c.item_id.in_(list(items))))
     }
     sizes = _group_sizes(session, list(items.values()))
+    characteristics = load_characteristics(session, list(items))
     views = []
     for item_id in item_ids:
         if item := items.get(item_id):
             size = sizes.get(item.group_id, 1) if item.group_id else 1
             confidence = top_confidence.get(item_id)
             band = band_of(confidence, settings) if confidence is not None else None
-            views.append(_item(item, predictions.get(item_id, []), band, finals.get(item_id), size))
+            view = _item(item, predictions.get(item_id, []), band, finals.get(item_id), size)
+            view.missing_required_count = characteristics[item_id]["missing_required_count"]
+            views.append(view)
     return views
 
 

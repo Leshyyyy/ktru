@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from contracts.ml_contracts import CharacteristicMatch, ExtractedAttributes
 
@@ -49,6 +49,7 @@ class JobSummary(BaseModel):
     red: int
     confirmed: int
     corrected: int
+    missing_required: int = 0
 
 
 class Job(BaseModel):
@@ -113,7 +114,37 @@ class Item(BaseModel):
     extracted: ExtractedAttributes | None
     predictions: list[Prediction]
     final: FinalAnswer | None
+    missing_required_count: int | None = None
     error: str | None
+
+
+class ItemCharacteristic(BaseModel):
+    name: str
+    required: bool
+    expected: str | None = None
+    allowed_values: list[str] = Field(default_factory=list)
+    found: str | None = None
+    value: str | None = None
+    status: Literal["match", "mismatch", "missing", "filled"]
+
+
+class ItemCharacteristics(BaseModel):
+    item_id: uuid.UUID
+    ktru_code: str | None
+    name: str | None = None
+    source: Literal["prediction", "catalog"] | None = None
+    missing_required_count: int | None
+    characteristics: list[ItemCharacteristic]
+
+
+class ItemCharacteristicsUpdate(BaseModel):
+    ktru_code: str
+    values: dict[str, Annotated[str, Field(max_length=500)] | None] = Field(min_length=1)
+
+    @field_validator("values")
+    @classmethod
+    def trim_values(cls, values: dict[str, str | None]) -> dict[str, str | None]:
+        return {name: (value.strip() or None) if value is not None else None for name, value in values.items()}
 
 
 class ItemList(BaseModel):
