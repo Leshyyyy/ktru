@@ -94,3 +94,29 @@ def test_exact_ktru_name_weakens_wrong_category(monkeypatch):
     assert not pipe.retriever._starts_with_name("Офисная бумага, формат А4")
     assert _run(pipe, "Бумага для офисной техники, формат А4").predictions[0].ktru_code == "77.77.03.000-00000004"
     assert _run(pipe, "Офисная бумага, формат А4").predictions[0].okpd2_code == "77.77.01.000"
+
+
+def test_weak_mismatch_is_shown_as_not_found():
+    # Число нашлось только по единице и относится к другой характеристике («ширина 6 мм» — не длина изделия):
+    # человеку — «не найдено», а в ранжировании это по-прежнему слабый голос против.
+    entry: CatalogEntry = entry_from_row({
+        "ktru_code": "77.77.09.000-00000002", "okpd2_code": "77.77.09.000", "name": "Петля", "status": "active",
+        "characteristics": [{"name": "Длина изделия", "values": ["≥ 134 и < 140"], "required": True, "unit": "Миллиметр"}]})
+    matcher = CharMatcher(Catalog([entry]))
+    weak = matcher.match_entry(entry, build_query_context("Петля для хрусталика, ширина петли 6 мм"))
+    assert weak.matches[0].status == "missing" and weak.matches[0].found is None
+    assert weak.score < 0.5 and not weak.required_missing
+    strong = matcher.match_entry(entry, build_query_context("Петля, длина изделия 6 мм"))
+    assert strong.matches[0].status == "mismatch" and strong.matches[0].found == "6 мм"
+
+
+def test_neighbour_characteristic_is_not_a_mismatch():
+    # «Количество флаконов 2» — не объём флакона: человеку «не найдено», а «объём флакона 2 мл» — «не соответствует».
+    entry: CatalogEntry = entry_from_row({
+        "ktru_code": "77.77.09.000-00000003", "okpd2_code": "77.77.09.000", "name": "Калибратор", "status": "active",
+        "characteristics": [{"name": "Объём флакона", "values": ["8"], "required": True, "unit": "Кубический сантиметр; миллилитр"}]})
+    matcher = CharMatcher(Catalog([entry]))
+    other = matcher.match_entry(entry, build_query_context("Калибратор ИВД, количество флаконов 2"))
+    assert other.matches[0].status == "missing"
+    own = matcher.match_entry(entry, build_query_context("Калибратор ИВД, объём флакона 2 мл"))
+    assert own.matches[0].status == "mismatch"

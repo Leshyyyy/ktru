@@ -123,6 +123,7 @@ class CharMatcher:
     def __init__(self, catalog: Catalog):
         self.vocab = {name: values for name, values in catalog.text_vocab.items()}
         self._stems: dict[str, list[str]] = {}
+        self._name_stems: dict[str, list[str]] = {}
         self._patterns: dict[str, re.Pattern] = {}
         self._vocab_patterns: dict[str, Optional[re.Pattern]] = {}
 
@@ -150,8 +151,25 @@ class CharMatcher:
             q._vocab_cache[char_name] = {m.group(1) for m in pat.finditer(q.text)} if pat else set()
         return q._vocab_cache[char_name]
 
+    def _named_at(self, char: CatalogChar, q: QueryContext, anchor: tuple[int, int]) -> bool:
+        """Все слова названия (без уточнения в скобках и единицы после запятой) стоят у найденного места.
+        Иначе место может принадлежать соседней характеристике: «количество флаконов» — не «объём флакона»,
+        «длина оптической трубки» — не «диаметр оптической трубки»."""
+        if char.name not in self._name_stems:
+            name = re.sub(r"\([^)]*\)", " ", char.name).split(",")[0]
+            self._name_stems[char.name] = [_stem(w) for w in re.findall(r"[а-яa-z]+", _norm(name)) if len(w) >= 4]
+        around = q.text[max(0, anchor[0] - ANCHOR_CLUSTER):anchor[1]]
+        return all(re.search(rf"(?<![а-яa-z]){re.escape(st)}", around) for st in self._name_stems[char.name])
+
     def match_char(self, char: CatalogChar, q: QueryContext) -> tuple[str, Optional[str], float, bool]:
         """→ (status, что найдено в тексте, качество совпадения 0..1, слабое ли свидетельство)."""
+        return self._match_char(char, q)[:4]
+
+    def _match_char(self, char: CatalogChar, q: QueryContext) -> tuple[str, Optional[str], float, bool, bool]:
+        """То же и пятым — можно ли показать результат человеку как факт. «Не соответствует» по слабому
+        свидетельству (число нашлось только по единице, «да» выведено из упоминания слова, значение из словаря
+        стоит не рядом с названием характеристики) часто относится к другой характеристике: в карточке и
+        выгрузке оно показывается как «не найдено», а в ранжировании голосует как раньше."""
         anchor = q.anchor(self._stems_for(char))
         ranges = [c for c in char.constraints if isinstance(c, Range)]
         texts = [c for c in char.constraints if isinstance(c, Text)]
@@ -178,8 +196,8 @@ class CharMatcher:
                         if qual is not None and (best is None or qual > best[1]):
                             best = (n, qual)
                 if best:
-                    return "match", _span(q, best[0]), best[1], weak
-                return "mismatch", _span(q, nums[0]), 0.0, weak
+                    return "match", _span(q, best[0]), best[1], weak, True
+                return "mismatch", _span(q, nums[0]), 0.0, weak, not weak and self._named_at(char, q, anchor)
 
         if texts:
             # Чем шире список допустимых значений, тем слабее совпадение говорит именно об этой позиции.
@@ -192,17 +210,21 @@ class CharMatcher:
                     explicit = re.match(r"\s*:?\s*(да|нет)(?![а-яa-z])", after)
                     said = "нет" if ("без" in before or (explicit and explicit.group(1) == "нет")) else "да"
                     weak = not explicit and "без" not in before
-                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), breadth, weak
-                return "missing", None, 0.0, False
+                    certain = not weak and self._named_at(char, q, anchor)
+                    return ("match" if said in yes_no else "mismatch"), said.capitalize(), breadth, weak, certain
+                return "missing", None, 0.0, False, True
             for t in texts:
                 if self._contains(q.text, t.norm):
-                    return "match", t.raw, breadth, False
+                    return "match", t.raw, breadth, False, True
             # В тексте значение этой характеристики, которого нет у позиции: другой формат, другой тип.
             own = {t.norm for t in texts}
             others = sorted(self._vocab_in_text(q, char.name) - own)
             if others:
-                return "mismatch", others[0], 0.0, False
-        return "missing", None, 0.0, False
+                near = anchor is not None and any(
+                    self._contains(q.text[anchor[1]:anchor[1] + ANCHOR_WINDOW], v) for v in others
+                )
+                return "mismatch", others[0], 0.0, False, near and self._named_at(char, q, anchor)
+        return "missing", None, 0.0, False, True
 
     def match_entry(self, entry: CatalogEntry, q: QueryContext, required_only: bool = False) -> EntryMatch:
         matches, qualities = [], {}
@@ -212,7 +234,7 @@ class CharMatcher:
         for c in entry.chars:
             if required_only and not c.required:
                 continue
-            status, found, qual, weak = self.match_char(c, q)
+            status, found, qual, weak, certain = self._match_char(c, q)
             w = (W_REQUIRED if c.required else W_OPTIONAL) * (W_WEAK if weak else 1.0)
             if c.required:
                 n_req += 1
@@ -227,13 +249,14 @@ class CharMatcher:
                 num += w * qual
             elif status == "mismatch":
                 num -= w
-            if status != "missing" or c.required:
+            shown, shown_found = (status, found) if certain or status != "mismatch" else ("missing", None)
+            if shown != "missing" or c.required:
                 matches.append(
                     CharacteristicMatch(
                         name=c.name,
                         expected=_expected(c),
-                        found=found,
-                        status=status,
+                        found=shown_found,
+                        status=shown,
                         required=c.required,
                     )
                 )
