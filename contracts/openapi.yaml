@@ -14,7 +14,8 @@ info:
       обязан переопределить обработчик `RequestValidationError`. Код 422 у нас означает только
       бизнес-ошибки: `file_unreadable`, `mapping_invalid`, `limit_exceeded`.
     * Время — UTC, формат ISO 8601.
-    * CORS: бэкенд добавляет `X-Unreviewed-Count` и `Content-Disposition` в `expose_headers`, иначе фронт их не прочитает.
+    * CORS: бэкенд добавляет `X-Unreviewed-Count`, `X-Missing-Required-Count` и `Content-Disposition` в `expose_headers`,
+      иначе фронт их не прочитает.
       Имя выгружаемого файла с кириллицей передаётся как `filename*=UTF-8''...`.
     * Размер файла: лимит nginx (`client_max_body_size`) выше 50 МБ, сами 50 МБ проверяет приложение и отвечает
       413 `file_too_large` в нашем формате, иначе nginx вернёт HTML.
@@ -24,6 +25,7 @@ servers:
 tags:
   - name: files
   - name: jobs
+  - name: batches
   - name: items
   - name: classify
   - name: catalog
@@ -42,6 +44,8 @@ paths:
         поэтому `row_count` у pdf равен null — точное число позиций станет известно при разборе в задаче.
         Если такой же файл (по sha256) уже обрабатывался, в ответе `duplicate_of_job_id`; если уже встречались
         такие же заголовки колонок — `layout_hint` с ранее подтверждённым сопоставлением (интерфейс подставляет его заранее).
+        `Sheet.mapping_confident = true` — роли колонок листа определены уверенно: при загрузке комплекта интерфейс
+        не просит их подтверждать, а показывает свёрнутыми.
       requestBody:
         required: true
         content:
@@ -119,6 +123,10 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/PageSize' }
+        - name: batch_id
+          in: query
+          description: Только задачи одного комплекта.
+          schema: { type: string, format: uuid }
       responses:
         '200':
           description: Задачи от новых к старым.
@@ -223,6 +231,10 @@ paths:
           in: query
           description: Только позиции одной группы повторов.
           schema: { type: string, format: uuid }
+        - name: missing_required
+          in: query
+          description: true — только позиции, у итогового кода которых есть незаполненные обязательные характеристики.
+          schema: { type: boolean }
         - name: sort
           in: query
           schema: { type: string, enum: [row_index, confidence_asc], default: row_index }
@@ -331,10 +343,19 @@ paths:
         `format=source` (по умолчанию) — тот же формат, что у загруженного файла; для pdf выдаётся xlsx.
         Число непроверенных позиций (статусы `processed` и `needs_review`) приходит в заголовке `X-Unreviewed-Count`.
         Если `allow_unreviewed=false` и такие позиции есть, ответ 409 `unreviewed_items`.
+
+        `format=application` — xlsx «для заявки»: позиция для переноса в закупочную документацию. Строка на каждую
+        характеристику итогового кода; колонки: № позиции (`row_index + 1`), исходное наименование, код КТРУ,
+        наименование КТРУ, характеристика, значение, единица измерения позиции, обязательная (да / нет), источник значения
+        (текст позиции / пользователь). Значение — введённое пользователем, иначе найденное в тексте
+        (см. `GET /items/{item_id}/characteristics`). Позиция без итогового кода — одна строка с пустым кодом.
+        Незаполненная обязательная характеристика — строка с пустым значением и пометкой «не заполнено».
+        Во всех форматах число позиций с незаполненными обязательными характеристиками (`missing_required_count > 0`)
+        приходит в заголовке `X-Missing-Required-Count`; выгрузку оно не блокирует, предупреждает интерфейс.
       parameters:
         - name: format
           in: query
-          schema: { type: string, enum: [source, xlsx, csv, json], default: source }
+          schema: { type: string, enum: [source, xlsx, csv, json, application], default: source }
         - name: allow_unreviewed
           in: query
           description: Разрешить выгрузку, если остались непроверенные позиции. По умолчанию разрешено.
@@ -345,6 +366,9 @@ paths:
           headers:
             X-Unreviewed-Count:
               description: Сколько позиций в выгрузке не проверено человеком.
+              schema: { type: integer }
+            X-Missing-Required-Count:
+              description: Сколько позиций в выгрузке с незаполненными обязательными характеристиками итогового кода.
               schema: { type: integer }
           content:
             application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
@@ -364,6 +388,123 @@ paths:
                   value: { error: { code: invalid_state, message: 'Задача ещё обрабатывается.', details: { status: processing } } }
                 unreviewed:
                   value: { error: { code: unreviewed_items, message: 'Осталось 38 непроверенных позиций.', details: { unreviewed: 38 } } }
+
+  /batches:
+    post:
+      tags: [batches]
+      summary: Создать комплект — задачи по нескольким файлам сразу
+      description: |
+        Комплект — группа обычных задач: по одной на каждый файл. Каждая задача создаётся и обрабатывается так же,
+        как через `POST /jobs` (те же проверки сопоставления и лимиты на задачу), и видна в `GET /jobs` с `batch_id`.
+        Создание атомарно: если хотя бы одна задача не прошла проверку, не создаётся ни комплект, ни задачи;
+        в `details.job_index` — номер задачи в запросе (с 0). Не больше `limits.max_files_per_batch` из `/config`
+        файлов, иначе 422 `limit_exceeded`. Отвечает сразу; прогресс — `GET /batches/{batch_id}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchCreate' }
+            example:
+              name: Закупка оргтехники, лоты 1–3
+              jobs:
+                - file_id: 7f3c2d1e-5a64-4b0b-9a3e-0c1f5c8d9a10
+                  sheet: Лист1
+                  header_row: 0
+                  column_mapping: [{ index: 0, role: name }, { index: 1, role: characteristics }, { index: 2, role: quantity }]
+                - file_id: 0b9e6a42-1c3d-4f5e-8a7b-6c5d4e3f2a19
+                  sheet: Таблицы
+                  header_row: 0
+                  column_mapping: [{ index: 1, role: name }, { index: 3, role: unit }]
+      responses:
+        '202':
+          description: Комплект создан, задачи поставлены в очередь.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Batch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '503': { $ref: '#/components/responses/NotReady' }
+    get:
+      tags: [batches]
+      summary: Список комплектов
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Комплекты от новых к старым.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, page, page_size]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Batch' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+
+  /batches/{batch_id}:
+    parameters:
+      - { $ref: '#/components/parameters/BatchId' }
+    get:
+      tags: [batches]
+      summary: Сводка и прогресс комплекта
+      description: Опрашивать раз в 1–2 секунды, пока статус `processing`. Позиции — `GET /jobs/{job_id}/items` по задачам комплекта.
+      responses:
+        '200':
+          description: Состояние комплекта.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Batch' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /batches/{batch_id}/export:
+    parameters:
+      - { $ref: '#/components/parameters/BatchId' }
+    get:
+      tags: [batches]
+      summary: Выгрузить результат комплекта одним файлом
+      description: |
+        То же, что выгрузка задачи, но по всем задачам комплекта сразу, позиции — в порядке задач, внутри задачи по `row_index`.
+        Первая колонка — «Файл-источник» (имя загруженного файла). Исходные колонки у файлов разные, поэтому вместо
+        них — исходный текст позиции (`raw_text`); формата `source` нет. `format=application` — как у задачи.
+        Доступно, когда ни одна задача комплекта не в `queued`, `parsing` или `processing`, иначе 409 `invalid_state`.
+        Заголовки `X-Unreviewed-Count` и `X-Missing-Required-Count` — суммарно по комплекту.
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [xlsx, csv, json, application], default: xlsx }
+        - name: allow_unreviewed
+          in: query
+          description: Разрешить выгрузку, если остались непроверенные позиции. По умолчанию разрешено.
+          schema: { type: boolean, default: true }
+      responses:
+        '200':
+          description: Файл.
+          headers:
+            X-Unreviewed-Count:
+              description: Сколько позиций в выгрузке не проверено человеком.
+              schema: { type: integer }
+            X-Missing-Required-Count:
+              description: Сколько позиций в выгрузке с незаполненными обязательными характеристиками итогового кода.
+              schema: { type: integer }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Комплект ещё обрабатывается (`invalid_state`) либо есть непроверенные позиции при `allow_unreviewed=false` (`unreviewed_items`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /items/{item_id}:
     parameters:
@@ -432,6 +573,63 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Item' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /items/{item_id}/characteristics:
+    parameters:
+      - { $ref: '#/components/parameters/ItemId' }
+    get:
+      tags: [items]
+      summary: Обязательные и найденные характеристики итогового кода позиции
+      description: |
+        Характеристики итогового кода (`v_item_final`): все обязательные по каталогу и необязательные, найденные в тексте.
+        Если итоговый код есть среди предсказаний позиции, `expected`, `found` и статусы берутся из его
+        `characteristic_matches`; иначе (код выбран вручную) — список характеристик из той версии каталога,
+        с которой работает задача, `found = null`. Сверху — значения, введённые пользователем (`PUT`).
+        У позиции без итогового кода (`pending` или упавшая без решения) — `ktru_code = null` и пустой список.
+      responses:
+        '200':
+          description: Характеристики.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemCharacteristics' }
+              example:
+                item_id: a1c4e8f2-3b7d-4a19-9c60-2d5e7f8a1b02
+                ktru_code: 99.99.01.000-00000001
+                name: Ноутбук
+                source: prediction
+                missing_required_count: 1
+                characteristics:
+                  - { name: Диагональ экрана, required: true, expected: 'от 13"', allowed_values: ['от 13"'], found: '15.6"', value: null, status: match }
+                  - { name: Объём ОЗУ, required: true, expected: 'от 8 ГБ', allowed_values: ['от 8 ГБ'], found: null, value: 16 ГБ, status: filled }
+                  - { name: Тип накопителя, required: true, expected: 'SSD; HDD', allowed_values: [SSD, HDD], found: null, value: null, status: missing }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [items]
+      summary: Дозаполнить характеристики позиции
+      description: |
+        Сохраняет значения, введённые пользователем, для итогового кода позиции. Значения только добавляются в журнал
+        (`item_characteristic_values`), действует последнее по имени характеристики; `null` убирает введённое значение.
+        Код и статус позиции не меняются. Отвечает тем же, что `GET`.
+        `ktru_code` в запросе должен совпадать с итоговым кодом позиции — иначе 409 `invalid_state` (код успели сменить);
+        у позиции без итогового кода — тоже 409. Имя, которого нет среди характеристик кода, — 400 `invalid_request`
+        с `details.field` = имя.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ItemCharacteristicsUpdate' }
+            example:
+              ktru_code: 99.99.01.000-00000001
+              values: { Объём ОЗУ: 16 ГБ, Тип накопителя: SSD }
+      responses:
+        '200':
+          description: Характеристики после сохранения.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ItemCharacteristics' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/InvalidState' }
@@ -656,7 +854,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicConfig' }
               example:
-                limits: { max_file_mb: 50, max_rows: 5000, max_items_per_job: 1000, classify_max_items: 20 }
+                limits: { max_file_mb: 50, max_rows: 5000, max_items_per_job: 1000, classify_max_items: 20, max_files_per_batch: 10 }
                 thresholds: { green: 0.85, yellow: 0.5 }
                 mode: { extractor: hybrid, reranker: cross_encoder, device: cpu, llm_enabled: false }
 
@@ -669,6 +867,11 @@ components:
       schema: { type: string, format: uuid }
     ItemId:
       name: item_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BatchId:
+      name: batch_id
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -781,6 +984,12 @@ components:
           type: array
           description: Первые 10 строк данных.
           items: { type: array, items: { type: string } }
+        mapping_confident:
+          type: boolean
+          default: false
+          description: |
+            Роли колонок определены уверенно: ровно одна колонка `name`, найденная по заголовку, и нет спорных колонок.
+            Интерфейс может не просить подтверждения (при загрузке комплекта такие листы показываются свёрнутыми).
 
     LayoutHint:
       type: object
@@ -860,6 +1069,11 @@ components:
       properties:
         job_id: { type: string, format: uuid }
         status: { $ref: '#/components/schemas/JobStatus' }
+        batch_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Комплект, в который входит задача; null — задача создана отдельно через `POST /jobs`.
         file_id: { type: string, format: uuid }
         filename: { type: string }
         total_items: { type: integer }
@@ -881,13 +1095,15 @@ components:
           description: |
             green / yellow / red — обработанные позиции по уверенности предсказания rank = 1
             (решения пользователя цвет не меняют). confirmed / corrected — сколько позиций решено вручную;
-            эти счётчики пересекаются с цветовыми.
+            эти счётчики пересекаются с цветовыми. missing_required — сколько позиций с незаполненными
+            обязательными характеристиками итогового кода (`missing_required_count > 0`).
           properties:
             green: { type: integer }
             yellow: { type: integer }
             red: { type: integer }
             confirmed: { type: integer }
             corrected: { type: integer }
+            missing_required: { type: integer }
         error: { type: string, nullable: true, description: 'Текст для пользователя, если статус failed.' }
         error_code:
           type: string
@@ -1007,6 +1223,13 @@ components:
           nullable: true
           allOf:
             - { $ref: '#/components/schemas/FinalAnswer' }
+        missing_required_count:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: |
+            Сколько обязательных характеристик итогового кода не найдено в тексте и не введено пользователем
+            (статус `missing` в `GET /items/{item_id}/characteristics`). null — у позиции нет итогового кода.
         error: { type: string, nullable: true }
 
     ItemList:
@@ -1053,6 +1276,105 @@ components:
         characteristics:
           type: array
           items: { $ref: '#/components/schemas/CatalogCharacteristic' }
+
+    ItemCharacteristic:
+      type: object
+      required: [name, required, status]
+      properties:
+        name: { type: string }
+        required: { type: boolean, description: Обязательна по КТРУ. }
+        expected: { type: string, nullable: true, description: 'Что допускает КТРУ, одной строкой (значения через «; »).' }
+        allowed_values:
+          type: array
+          items: { type: string }
+          description: Значения из каталога. Если это перечень (не диапазон), интерфейс может предложить выбор из списка.
+        found: { type: string, nullable: true, description: Что найдено в тексте позиции. }
+        value: { type: string, nullable: true, description: Что ввёл пользователь. }
+        status:
+          type: string
+          enum: [match, mismatch, missing, filled]
+          description: |
+            filled — значение ввёл пользователь (важнее найденного в тексте); иначе статус сверки текста:
+            match — найдено и подходит, mismatch — найдено, но не подходит под КТРУ, missing — не найдено.
+
+    ItemCharacteristics:
+      type: object
+      required: [item_id, ktru_code, characteristics, missing_required_count]
+      properties:
+        item_id: { type: string, format: uuid }
+        ktru_code: { type: string, nullable: true, description: Итоговый код позиции; null — кода нет. }
+        name: { type: string, nullable: true, description: Наименование итогового кода. }
+        source:
+          type: string
+          nullable: true
+          enum: [prediction, catalog]
+          description: prediction — `found` из сверки при обработке; catalog — код выбран вручную, сверки не было.
+        missing_required_count: { type: integer, minimum: 0, nullable: true }
+        characteristics:
+          type: array
+          description: Сначала обязательные, затем остальные, внутри — в порядке каталога.
+          items: { $ref: '#/components/schemas/ItemCharacteristic' }
+
+    ItemCharacteristicsUpdate:
+      type: object
+      required: [ktru_code, values]
+      properties:
+        ktru_code: { type: string, description: 'Итоговый код, для которого вводятся значения.' }
+        values:
+          type: object
+          minProperties: 1
+          description: Имя характеристики → значение; null убирает введённое значение.
+          additionalProperties: { type: string, nullable: true, maxLength: 500 }
+
+    BatchCreate:
+      type: object
+      required: [jobs]
+      properties:
+        name: { type: string, nullable: true, maxLength: 200, description: Название комплекта; по умолчанию интерфейс показывает имена файлов. }
+        jobs:
+          type: array
+          minItems: 1
+          description: По элементу на файл — как тело `POST /jobs`.
+          items: { $ref: '#/components/schemas/JobCreate' }
+
+    BatchStatus:
+      type: string
+      enum: [processing, done, done_with_errors, failed, cancelled]
+      description: |
+        processing — хотя бы одна задача в queued, parsing или processing; иначе done — все задачи done;
+        failed — все failed; cancelled — все cancelled; done_with_errors — остальные сочетания.
+
+    Batch:
+      type: object
+      required: [batch_id, status, total_items, processed_items, failed_items, progress, summary, jobs, created_at]
+      properties:
+        batch_id: { type: string, format: uuid }
+        name: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/BatchStatus' }
+        total_items: { type: integer, description: Сумма по задачам. }
+        processed_items: { type: integer }
+        failed_items: { type: integer }
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: (processed_items + failed_items) / total_items по всем задачам; пока ни один файл не разобран — 0.
+        eta_seconds: { type: integer, nullable: true }
+        summary:
+          type: object
+          description: Сумма `Job.summary` по задачам комплекта.
+          properties:
+            green: { type: integer }
+            yellow: { type: integer }
+            red: { type: integer }
+            confirmed: { type: integer }
+            corrected: { type: integer }
+            missing_required: { type: integer }
+        jobs:
+          type: array
+          description: Задачи комплекта в порядке создания; удалённые задачи сюда не входят.
+          items: { $ref: '#/components/schemas/Job' }
+        created_at: { type: string, format: date-time }
 
     CatalogVersion:
       type: object
@@ -1122,6 +1444,7 @@ components:
             max_rows: { type: integer, description: Сколько строк разбирается на листе (с запасом на пустые и служебные). }
             max_items_per_job: { type: integer, description: Сколько позиций после очистки пустых строк допускается в одной задаче. }
             classify_max_items: { type: integer }
+            max_files_per_batch: { type: integer, description: Сколько файлов можно загрузить одним комплектом. }
         thresholds:
           type: object
           description: green — уверенность не ниже green; yellow — не ниже yellow; red — ниже yellow.

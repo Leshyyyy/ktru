@@ -25,7 +25,7 @@
 | `tasks/celery_app.py` | Celery: `create_celery(settings)`, очереди `io`/`ml`, JSON, `acks_late`, лимиты, beat |
 | `tasks/jobs.py`, `tasks/watchdog.py` | задачи io: `io.parse_file`, `io.import_catalog`, `io.watchdog` (задачи, прогоны оценки, импорт каталога), `io.cleanup_uploads` (раз в час); логика — в `core/` |
 | `tasks/ml_worker.py` | вход worker-ml (очереди `classify,ml`): загрузка конвейера, готовность, `ml.process_chunk` с ретраями 5/20/60 с, `ml.classify`, `ml.quality_run`, поток `CatalogSync` |
-| `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`), дальше — ревизии с ALTER (`0002`: `is_enlarged`, `alt_valid_codes`) |
+| `migrations/` | Alembic; `0001` — замороженная копия `contracts/schema.sql` (`sql/0001_initial.sql`), дальше — ревизии с ALTER (`0002`: `is_enlarged`, `alt_valid_codes`; `0003`: комплекты `batches`, `jobs.batch_id`, `item_characteristic_values`) |
 | `migrate.py` | контейнер migrate: миграции → роль приложения → каталог (в режиме real скачивает его на том `catalog`, 3 попытки с паузой 30 с; не вышло — заглушка) |
 | `Dockerfile` | два образа: по умолчанию `ktru-backend` (api, worker-io, beat, migrate), `--target ml` — `ktru-backend-ml` для worker-ml (torch CPU, `requirements-ml.txt`, модель e5-small из `fetch_embedder.py`) |
 
