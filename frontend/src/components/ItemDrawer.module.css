@@ -195,3 +195,31 @@
     background: var(--k-primary-tint);
   }
 }
+
+/* Блок обязательных характеристик итогового кода. */
+.charRow {
+  padding: 12px 14px;
+  border: 1px solid var(--k-line);
+  border-radius: 10px;
+  background: var(--k-surface);
+}
+
+.charStatus {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.charReq {
+  color: var(--k-lo-ink);
+  font-weight: 600;
+}
+
+.missCount {
+  color: var(--k-lo-ink);
+  font-weight: 600;
+}

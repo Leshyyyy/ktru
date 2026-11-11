@@ -104,6 +104,19 @@
   white-space: nowrap;
 }
 
+.missReq {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--k-lo-ink);
+  background: var(--k-lo-bg);
+  border-radius: 5px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
 .grp {
   display: inline-flex;
   font: inherit;

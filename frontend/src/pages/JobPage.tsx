@@ -60,6 +60,7 @@ import {
   ItemStatusBadge,
   JobStatusBadge,
   KtruCode,
+  MissingRequiredBadge,
   useThresholds,
 } from "../components/badges";
 import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
@@ -117,6 +118,7 @@ function JobView({ job }: { job: Job }) {
   const status = (sp.get("status") as ItemStatus | null) ?? undefined;
   const flag = (sp.get("flag") as ItemFlag | null) ?? undefined;
   const group_id = sp.get("group") ?? undefined;
+  const missingRequired = sp.get("missing_required") === "true";
   const sort = sp.get("sort") === "confidence_asc" ? "confidence_asc" : "row_index";
   const page = Number(sp.get("page") ?? 1);
   const [q, setQ] = useState(sp.get("q") ?? "");
@@ -149,6 +151,7 @@ function JobView({ job }: { job: Job }) {
     status,
     flag,
     group_id,
+    missing_required: missingRequired || undefined,
     sort,
     q: debouncedQ || undefined,
   };
@@ -160,7 +163,7 @@ function JobView({ job }: { job: Job }) {
   }, [progressKey, job.job_id, qc]);
   const [openId, setOpenId] = useState<string | null>(null);
   const idx = list?.items.findIndex((i) => i.item_id === openId) ?? -1;
-  const filtered = !!(band || status || flag || group_id || debouncedQ);
+  const filtered = !!(band || status || flag || group_id || missingRequired || debouncedQ);
   const withOverlay = useWithOverlay();
 
   // Сколько позиций ждут человека — для главной кнопки «Проверить спорные».
@@ -242,7 +245,12 @@ function JobView({ job }: { job: Job }) {
             )}
             {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
             {/* Пока есть спорные, главное — проверка; когда их нет, главной становится выгрузка. */}
-            <ExportMenu job={job} disabled={!finished} emphasis={disputed === 0} />
+            <ExportMenu
+              job={job}
+              disabled={!finished}
+              emphasis={disputed === 0}
+              onShowMissing={() => setParam("missing_required", "true")}
+            />
           </Group>
         </Group>
       </Stack>
@@ -289,6 +297,14 @@ function JobView({ job }: { job: Job }) {
           >
             Только требующие проверки
           </FilterChip>
+          {(job.summary.missing_required ?? 0) > 0 && (
+            <FilterChip
+              active={missingRequired}
+              onClick={() => setParam("missing_required", missingRequired ? null : "true")}
+            >
+              С незаполненными обязательными · {job.summary.missing_required}
+            </FilterChip>
+          )}
           <FilterChip
             active={sort === "confidence_asc"}
             onClick={() => setParam("sort", sort === "confidence_asc" ? null : "confidence_asc")}
@@ -681,6 +697,11 @@ function ItemsTable({
                     <ConfidenceBadge value={it.predictions[0]?.confidence} />
                     <Box mt={6}>
                       <ItemStatusBadge status={it.status} />
+                      {it.missing_required_count ? (
+                        <Box mt={4}>
+                          <MissingRequiredBadge count={it.missing_required_count} />
+                        </Box>
+                      ) : null}
                     </Box>
                   </Table.Td>
                 ) : (
@@ -691,6 +712,11 @@ function ItemsTable({
                     <Table.Td>
                       <ItemStatusBadge status={it.status} />
                       <FlagChips flags={it.flags} />
+                      {it.missing_required_count ? (
+                        <Box mt={4}>
+                          <MissingRequiredBadge count={it.missing_required_count} />
+                        </Box>
+                      ) : null}
                     </Table.Td>
                   </>
                 )}
@@ -816,33 +842,72 @@ function BulkConfirm({ job }: { job: Job }) {
   );
 }
 
-function ExportMenu({ job, disabled, emphasis }: { job: Job; disabled: boolean; emphasis: boolean }) {
+function ExportMenu({
+  job,
+  disabled,
+  emphasis,
+  onShowMissing,
+}: {
+  job: Job;
+  disabled: boolean;
+  emphasis: boolean;
+  /** «Показать их» из предупреждения перед выгрузкой: открыть таблицу с незаполненными обязательными. */
+  onShowMissing: () => void;
+}) {
   const exp = useExport();
+  const missing = job.summary.missing_required ?? 0;
   const formats = useMemo(
     () =>
       [
         { f: "source", label: "Как исходный файл", hint: "тот же формат; pdf выгрузим в xlsx" },
+        {
+          f: "application",
+          label: "Для заявки (xlsx)",
+          hint: "код, наименование и характеристики позиции — для закупочной документации",
+        },
         { f: "xlsx", label: "Excel (xlsx)" },
         { f: "csv", label: "CSV" },
         { f: "json", label: "JSON" },
       ] as { f: ExportFormat; label: string; hint?: string }[],
     [],
   );
-  const run = (format: ExportFormat) =>
+  const doExport = (format: ExportFormat) =>
     exp.mutate(
       { job, format },
       {
-        onSuccess: ({ unreviewed }) =>
+        onSuccess: ({ unreviewed, missingRequired }) => {
+          const warn: string[] = [];
+          if (unreviewed)
+            warn.push(`${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком`);
+          if (missingRequired)
+            warn.push(
+              `${missingRequired} ${plural(missingRequired, "позиция", "позиции", "позиций")} с незаполненными обязательными характеристиками`,
+            );
           notifications.show({
-            color: unreviewed ? "yellow" : "primary",
+            color: warn.length ? "yellow" : "primary",
             title: "Файл выгружен",
-            message: unreviewed
-              ? `В выгрузке ${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком. Они помечены в колонке «Источник».`
-              : "Все позиции проверены.",
-          }),
+            message: warn.length ? `${warn.join("; ")}.` : "Все позиции проверены и заполнены.",
+          });
+        },
         onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
       },
     );
+  const run = (format: ExportFormat) => {
+    if (!missing) return doExport(format);
+    modals.openConfirmModal({
+      title: "Незаполненные обязательные характеристики",
+      children: (
+        <Text size="sm">
+          У {missing} {plural(missing, "позиции", "позиций", "позиций")} не заполнены обязательные характеристики
+          итогового кода. В выгрузке «для заявки» такие строки помечены «не заполнено».
+        </Text>
+      ),
+      labels: { confirm: "Выгрузить всё равно", cancel: "Показать их" },
+      confirmProps: { color: "primary" },
+      onConfirm: () => doExport(format),
+      onCancel: onShowMissing,
+    });
+  };
   const button = (
     <Button
       {...(emphasis ? { color: "#16201C" } : { variant: "default" })}
