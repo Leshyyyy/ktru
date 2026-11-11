@@ -1,9 +1,8 @@
 """Тег jobs: GET /jobs/{id}/export — исходные колонки плюс код, наименование, уверенность, статус, источник
 и предупреждения (FR-7.1, FR-7.2).
 
-Обычные форматы собирает backend/files (export_job_results): формат, экранирование формул, имя файла по RFC 5987.
-`application` пока собирает `backend.core.application_export` — временная замена, пока файловый модуль не умеет
-этот формат. Здесь — проверка статуса задачи, итоговые коды из v_item_final, характеристики и заголовки
+Форматы собирает backend/files (export_job_results): экранирование формул и имя файла по RFC 5987.
+Здесь — проверка статуса задачи, итоговые коды из v_item_final, характеристики и заголовки
 X-Unreviewed-Count / X-Missing-Required-Count. До 1000 позиций выгрузка формируется синхронно.
 """
 
@@ -18,12 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.core import models
-from backend.core.application_export import export_application
 from backend.core.characteristics import load_characteristics
 from backend.core.processing import ACTIVE_STATUSES
 from backend.core.settings import Settings
 from backend.files import UnreviewedItemsError, export_job_results
-from backend.files.exceptions import UnsupportedTypeError
 
 from ..deps import get_db, get_settings
 from ..errors import ApiError, invalid_state, not_found
@@ -59,26 +56,16 @@ def export_job(
     items = _export_items(session, job_id, mapping)
     missing_required = sum(1 for item in items if (item["missing_required_count"] or 0) > 0)
     try:
-        try:
-            result = export_job_results(
-                items,
-                headers=_headers(source, mapping.get("sheet")),
-                export_format=export_format,
-                original_filename=source.filename,
-                source_path=settings.upload_dir / source.storage_path,
-                sheet_name=mapping.get("sheet"),
-                allow_unreviewed=allow_unreviewed,
-                header_row=mapping.get("header_row", 0),
-            )
-        except UnsupportedTypeError:
-            # backend/files ещё не умеет application; временная сборка на стороне API.
-            if export_format != "application":
-                raise
-            result = export_application(
-                items,
-                original_filename=source.filename,
-                allow_unreviewed=allow_unreviewed,
-            )
+        result = export_job_results(
+            items,
+            headers=_headers(source, mapping.get("sheet")),
+            export_format=export_format,
+            original_filename=source.filename,
+            source_path=settings.upload_dir / source.storage_path,
+            sheet_name=mapping.get("sheet"),
+            allow_unreviewed=allow_unreviewed,
+            header_row=mapping.get("header_row", 0),
+        )
     except UnreviewedItemsError as e:
         details = e.details if isinstance(e.details, dict) else None
         raise ApiError(409, "unreviewed_items", e.message, details) from None

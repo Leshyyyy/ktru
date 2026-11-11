@@ -55,6 +55,7 @@ class JobSummary(BaseModel):
 class Job(BaseModel):
     job_id: uuid.UUID
     status: JobStatus
+    batch_id: uuid.UUID | None = None
     file_id: uuid.UUID
     filename: str
     total_items: int
@@ -74,6 +75,35 @@ class Job(BaseModel):
 
 class JobList(BaseModel):
     items: list[Job]
+    total: int
+    page: int
+    page_size: int
+
+
+BatchStatus = Literal["processing", "done", "done_with_errors", "failed", "cancelled"]
+
+
+class BatchCreate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    jobs: list[JobCreate] = Field(min_length=1)
+
+
+class Batch(BaseModel):
+    batch_id: uuid.UUID
+    name: str | None
+    status: BatchStatus
+    total_items: int
+    processed_items: int
+    failed_items: int
+    progress: float
+    eta_seconds: int | None
+    summary: JobSummary
+    jobs: list[Job]
+    created_at: datetime
+
+
+class BatchList(BaseModel):
+    items: list[Batch]
     total: int
     page: int
     page_size: int
@@ -245,6 +275,7 @@ class Limits(BaseModel):
     max_file_mb: int
     max_rows: int
     max_items_per_job: int
+    max_files_per_batch: int
     classify_max_items: int
 
 

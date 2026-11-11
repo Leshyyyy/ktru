@@ -40,6 +40,7 @@ def config(
             max_file_mb=settings.max_file_mb,
             max_rows=settings.max_rows,
             max_items_per_job=settings.max_items_per_job,
+            max_files_per_batch=settings.max_files_per_batch,
             classify_max_items=settings.classify_max_items,
         ),
         thresholds=Thresholds(green=settings.green_threshold, yellow=settings.yellow_threshold),

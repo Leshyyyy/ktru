@@ -58,6 +58,78 @@ def job_views(session: Session, settings: Settings, job_ids: Sequence[uuid.UUID]
     return views
 
 
+def batch_views(session: Session, settings: Settings, batch_ids: Sequence[uuid.UUID]) -> list[schemas.Batch]:
+    """Комплекты и их задачи: одна выборка данных и одна общая выборка сводок позиций."""
+    if not batch_ids:
+        return []
+    rows = session.execute(
+        select(models.Batch, models.Job, models.SourceFile.filename)
+        .outerjoin(models.Job, models.Job.batch_id == models.Batch.id)
+        .outerjoin(models.SourceFile, models.SourceFile.id == models.Job.file_id)
+        .where(models.Batch.id.in_(batch_ids))
+        .order_by(models.Batch.created_at.desc(), models.Job.created_at, models.Job.id)
+    ).all()
+    batches: dict[uuid.UUID, models.Batch] = {}
+    jobs: dict[uuid.UUID, list[tuple[models.Job, str]]] = {}
+    job_ids: list[uuid.UUID] = []
+    for batch, job, filename in rows:
+        batches[batch.id] = batch
+        if job is not None:
+            jobs.setdefault(batch.id, []).append((job, filename))
+            job_ids.append(job.id)
+    summaries = _summaries(session, settings, job_ids)
+    now = datetime.now(UTC)
+    result = []
+    for batch_id in batch_ids:
+        if batch_id not in batches:
+            continue
+        batch = batches[batch_id]
+        members = [
+            _job(job, filename, summaries.get(job.id, _EMPTY_SUMMARY), now) for job, filename in jobs.get(batch_id, [])
+        ]
+        statuses = [member.status for member in members]
+        if any(status in ("queued", "parsing", "processing") for status in statuses):
+            status: schemas.BatchStatus = "processing"
+        elif statuses and all(value == "done" for value in statuses):
+            status = "done"
+        elif statuses and all(value == "failed" for value in statuses):
+            status = "failed"
+        elif statuses and all(value == "cancelled" for value in statuses):
+            status = "cancelled"
+        else:
+            status = "done_with_errors"
+        total = sum(member.total_items for member in members)
+        processed = sum(member.processed_items for member in members)
+        failed = sum(member.failed_items for member in members)
+        active = [member for member in members if member.status in ("queued", "parsing", "processing")]
+        eta = (
+            max((member.eta_seconds or 0) for member in active)
+            if active and all(member.eta_seconds is not None for member in active)
+            else None
+        )
+        result.append(
+            schemas.Batch(
+                batch_id=batch.id,
+                name=batch.name,
+                status=status,
+                total_items=total,
+                processed_items=processed,
+                failed_items=failed,
+                progress=round(min((processed + failed) / total, 1.0), 3) if total else 0.0,
+                eta_seconds=eta,
+                summary=schemas.JobSummary(
+                    **{
+                        field: sum(getattr(member.summary, field) for member in members)
+                        for field in schemas.JobSummary.model_fields
+                    }
+                ),
+                jobs=members,
+                created_at=_utc(batch.created_at),
+            )
+        )
+    return result
+
+
 def _summaries(
     session: Session, settings: Settings, job_ids: Sequence[uuid.UUID]
 ) -> dict[uuid.UUID, schemas.JobSummary]:
@@ -102,6 +174,7 @@ def _job(job: models.Job, filename: str, summary: schemas.JobSummary, now: datet
     total = job.total_items
     return schemas.Job(
         job_id=job.id,
+        batch_id=job.batch_id,
         status=job.status,
         file_id=job.file_id,
         filename=filename,

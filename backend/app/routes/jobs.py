@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -48,36 +49,55 @@ def create_job(
 ) -> schemas.Job:
     if not checker.check().ready:
         raise not_ready()
+    job_id, file_id = prepare_job(session, body)
+    session.commit()
+    enqueue_job(queue, job_id)
+    log.info("Задача создана", extra={"job_id": str(job_id), "file_id": str(file_id)})
+    return job_views(session, settings, [job_id])[0]
+
+
+def prepare_job(
+    session: Session,
+    body: schemas.JobCreate,
+    *,
+    batch_id: uuid.UUID | None = None,
+    version_id: uuid.UUID | None = None,
+    created_at: datetime | None = None,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Общие проверки и запись обычной задачи; транзакцией управляет вызывающий маршрут."""
     source = session.get(models.SourceFile, body.file_id)
     if source is None:
         raise not_found("file", "Файл не найден. Загрузите его заново.")
     sheet = _sheet(source, body.sheet)
     columns = [entry.model_dump() for entry in body.column_mapping]
     _check_mapping(sheet, columns)
-    version_id = latest_ready_version(session)
+    version_id = version_id or latest_ready_version(session)
     if version_id is None:
         raise not_ready()
 
     job_id = uuid.uuid4()
-    session.add(
-        models.Job(
-            id=job_id,
-            file_id=source.id,
-            catalog_version_id=version_id,
-            status="queued",
-            column_mapping={"sheet": sheet["name"], "header_row": body.header_row, "columns": columns},
-            options=body.options.model_dump(),
-        )
-    )
+    job_values: dict[str, Any] = {
+        "id": job_id,
+        "file_id": source.id,
+        "batch_id": batch_id,
+        "catalog_version_id": version_id,
+        "status": "queued",
+        "column_mapping": {"sheet": sheet["name"], "header_row": body.header_row, "columns": columns},
+        "options": body.options.model_dump(),
+    }
+    if created_at is not None:
+        job_values["created_at"] = created_at
+    session.add(models.Job(**job_values))
     _remember_layout(session, sheet, body.header_row, columns)
-    session.commit()
+    return job_id, source.id
+
+
+def enqueue_job(queue: TaskQueue, job_id: uuid.UUID) -> None:
     try:
         queue.parse_file(str(job_id))
     except Exception:
         # Задача уже в базе в статусе queued: через 5 минут её снова поставит в очередь watchdog.
         log.exception("Не удалось поставить разбор файла в очередь", extra={"job_id": str(job_id)})
-    log.info("Задача создана", extra={"job_id": str(job_id), "file_id": str(source.id)})
-    return job_views(session, settings, [job_id])[0]
 
 
 def _sheet(source: models.SourceFile, name: str | None) -> dict[str, Any]:
@@ -129,10 +149,13 @@ def list_jobs(
     session: SessionDep,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+    batch_id: uuid.UUID | None = None,
 ) -> schemas.JobList:
-    total = session.scalar(select(func.count()).select_from(models.Job)) or 0
+    conditions = [models.Job.batch_id == batch_id] if batch_id is not None else []
+    total = session.scalar(select(func.count()).select_from(models.Job).where(*conditions)) or 0
     ids = session.scalars(
         select(models.Job.id)
+        .where(*conditions)
         .order_by(models.Job.created_at.desc(), models.Job.id)
         .limit(page_size)
         .offset((page - 1) * page_size)
