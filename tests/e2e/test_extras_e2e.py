@@ -243,6 +243,7 @@ def test_extras_e2e_full_workflow(sample_batch_files: list[Path]):
     )
     wb_batch_app = openpyxl.load_workbook(io.BytesIO(res_batch_app.content))
     ws_batch_app = wb_batch_app.active
+    assert ws_batch_app.title == "Заявка"
     app_rows = [[cell.value for cell in row] for row in ws_batch_app.iter_rows()]
 
     # Заголовок batch application содержит Файл-источник + 9 колонок заявки
@@ -279,6 +280,7 @@ def test_extras_e2e_full_workflow(sample_batch_files: list[Path]):
     assert res_single_app.filename == "spec_laptops_application.xlsx"
     wb_single_app = openpyxl.load_workbook(io.BytesIO(res_single_app.content))
     ws_single_app = wb_single_app.active
+    assert ws_single_app.title == "Заявка"
     single_app_rows = [
         [cell.value for cell in row] for row in ws_single_app.iter_rows()
     ]

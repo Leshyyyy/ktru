@@ -533,6 +533,7 @@ def test_export_application_xlsx_basic():
 
     wb = openpyxl.load_workbook(io.BytesIO(res.content))
     ws = wb.active
+    assert ws.title == "Заявка"
     rows = [[cell.value for cell in row] for row in ws.iter_rows()]
 
     # Заголовок из 9 колонок
@@ -648,10 +649,18 @@ def test_export_job_results_format_application():
             ],
         )
     ]
-    res = export_job_results(items, export_format=ExportFormat.APPLICATION, original_filename="test.xlsx")
+    # Даже если маршрут передает sheet_name="ИсходныйЛист", лист должен называться «Заявка»
+    res = export_job_results(
+        items,
+        export_format=ExportFormat.APPLICATION,
+        original_filename="test.xlsx",
+        sheet_name="ИсходныйЛист",
+    )
     assert res.filename == "test_application.xlsx"
     assert res.missing_required_count == 0
     assert res.unreviewed_count == 0
+    wb = openpyxl.load_workbook(io.BytesIO(res.content))
+    assert wb.active.title == "Заявка"
 
 
 def test_export_batch_results_xlsx():
@@ -757,9 +766,15 @@ def test_export_batch_results_application():
             ],
         )
     ]
-    res = export_batch_results(items, export_format=ExportFormat.APPLICATION, batch_filename="batch.xlsx")
+    res = export_batch_results(
+        items,
+        export_format=ExportFormat.APPLICATION,
+        batch_filename="batch.xlsx",
+        sheet_name="Комплект",
+    )
     wb = openpyxl.load_workbook(io.BytesIO(res.content))
     ws = wb.active
+    assert ws.title == "Заявка"
     rows = [[cell.value for cell in row] for row in ws.iter_rows()]
 
     # В batch application первой колонкой идет "Файл-источник"

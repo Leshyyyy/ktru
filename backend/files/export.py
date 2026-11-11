@@ -463,7 +463,7 @@ def export_application_xlsx(
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = sheet_name or "Заявка"
+    ws.title = "Заявка"
 
     columns = BATCH_APPLICATION_COLUMNS if is_batch else APPLICATION_COLUMNS
     header_font = Font(bold=True, color="000000")
@@ -544,7 +544,7 @@ def export_batch_results(
             normalized_items,
             original_filename=batch_filename,
             allow_unreviewed=allow_unreviewed,
-            sheet_name=sheet_name or "Комплект",
+            sheet_name="Заявка",
             is_batch=True,
         )
 
@@ -709,7 +709,7 @@ def export_job_results(
             normalized_items,
             original_filename=original_filename,
             allow_unreviewed=allow_unreviewed,
-            sheet_name=sheet_name or "Заявка",
+            sheet_name="Заявка",
             is_batch=False,
         )
 
