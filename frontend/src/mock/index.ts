@@ -11,6 +11,8 @@ import type {
   FileInfo,
   FinalAnswer,
   Item,
+  ItemCharacteristic,
+  ItemCharacteristics,
   ItemStatus,
   Job,
   JobStatus,
@@ -46,6 +48,8 @@ type ItemRec = {
   result: MockResult;
   readyAt: number;
   decisions: Decision[];
+  /** Введённые пользователем значения характеристик: ktru_code → имя → значение (null убирает). */
+  charValues: Map<string, Map<string, string | null>>;
 };
 type FileRec = { file_id: string; filename: string; size: number; sha: string; sheets: ParsedSheet[]; info: FileInfo };
 type JobRec = {
@@ -96,6 +100,74 @@ function itemStatus(it: ItemRec, job: JobRec): ItemStatus {
 
 const bandOf = (c: number) => (c >= THRESHOLDS.green ? "green" : c >= THRESHOLDS.yellow ? "yellow" : "red");
 
+/** Итоговый код позиции: решение пользователя, иначе предсказание rank 1 готовой позиции; null — кода нет. */
+function finalCodeOf(it: ItemRec, job: JobRec): string | null {
+  const last = it.decisions.at(-1);
+  if (last) return last.ktru_code;
+  if (it.readyAt > cutoff(job)) return null;
+  return it.result.predictions[0]?.ktru_code ?? null;
+}
+
+/**
+ * Характеристики итогового кода. Как в контракте: если код среди предсказаний — статусы из его
+ * `characteristic_matches`; иначе (код выбран вручную) — из каталога с `found = null`. Сверху — значения,
+ * введённые пользователем через PUT.
+ */
+function charList(it: ItemRec, code: string): ItemCharacteristic[] {
+  const pred = it.result.predictions.find((p) => p.ktru_code === code);
+  const cat = byCode.get(code);
+  const userValues = it.charValues.get(code);
+  return (cat?.characteristics ?? [])
+    .map((c): ItemCharacteristic => {
+      const m = pred?.characteristic_matches?.find((x) => x.name === c.name);
+      const value = userValues?.get(c.name) ?? null;
+      const found = m?.found ?? null;
+      const status: ItemCharacteristic["status"] = value != null ? "filled" : (m?.status ?? "missing");
+      return {
+        name: c.name,
+        required: c.required,
+        expected: c.values.join("; "),
+        allowed_values: c.values,
+        found,
+        value,
+        status,
+      };
+    })
+    .filter((c) => c.required || c.found != null);
+}
+
+function charView(it: ItemRec): ItemCharacteristics {
+  const job = jobs.get(it.job_id)!;
+  const code = finalCodeOf(it, job);
+  if (!code)
+    return {
+      item_id: it.item_id,
+      ktru_code: null,
+      name: null,
+      source: null,
+      missing_required_count: null,
+      characteristics: [],
+    };
+  const pred = it.result.predictions.find((p) => p.ktru_code === code);
+  const cat = byCode.get(code);
+  const chars = charList(it, code);
+  return {
+    item_id: it.item_id,
+    ktru_code: code,
+    name: cat?.name ?? pred?.name ?? null,
+    source: pred ? "prediction" : "catalog",
+    missing_required_count: chars.filter((c) => c.required && c.status === "missing").length,
+    characteristics: chars,
+  };
+}
+
+function missingRequired(it: ItemRec): number | null {
+  const job = jobs.get(it.job_id)!;
+  const code = finalCodeOf(it, job);
+  if (!code) return null;
+  return charList(it, code).filter((c) => c.required && c.status === "missing").length;
+}
+
 function itemView(it: ItemRec): Item {
   const job = jobs.get(it.job_id)!;
   const status = itemStatus(it, job);
@@ -128,6 +200,7 @@ function itemView(it: ItemRec): Item {
     extracted: ready ? it.result.extracted : null,
     predictions: preds,
     final,
+    missing_required_count: missingRequired(it),
     error: ready ? it.result.error : null,
   };
 }
@@ -151,11 +224,12 @@ function jobView(job: JobRec): Job {
 
   const parsed = status !== "queued" && status !== "parsing";
   const total = parsed ? job.items.length : 0;
-  const summary = { green: 0, yellow: 0, red: 0, confirmed: 0, corrected: 0 };
+  const summary = { green: 0, yellow: 0, red: 0, confirmed: 0, corrected: 0, missing_required: 0 };
   for (const v of ready) {
     if (v.band) summary[v.band]++;
     if (v.status === "confirmed") summary.confirmed++;
     if (v.status === "corrected") summary.corrected++;
+    if ((v.missing_required_count ?? 0) > 0) summary.missing_required++;
   }
   const finished = status === "done" || status === "done_with_errors" || status === "cancelled";
   return {
@@ -224,6 +298,7 @@ function createJob(opts: {
       result: classify(raw_text, columns),
       readyAt: parsedAt + (i + 1) * (1000 / RATE),
       decisions: [],
+      charValues: new Map(),
     };
     job.items.push(it);
     items.set(it.item_id, it);
@@ -403,6 +478,10 @@ const routes: [string, string, Handler][] = [
             name: s.name,
             row_count: s.rowCountKnown ? data.length : null,
             header_row,
+            // Роли уверенные, когда по заголовку нашлась ровно одна колонка наименования (без «догадки» по длине).
+            mapping_confident:
+              roles.filter((r) => r === "name").length === 1 &&
+              headers.some((h) => /наимен|товар|предмет|позиц/.test(h.toLowerCase())),
             columns: headers.map((header, index) => ({
               index,
               header: header || `Колонка ${index + 1}`,
@@ -526,6 +605,7 @@ const routes: [string, string, Handler][] = [
       if (sp.get("status")) list = list.filter((v) => v.status === sp.get("status"));
       if (sp.get("flag")) list = list.filter((v) => v.flags?.includes(sp.get("flag") as never));
       if (sp.get("group_id")) list = list.filter((v) => v.group_id === sp.get("group_id"));
+      if (sp.get("missing_required") === "true") list = list.filter((v) => (v.missing_required_count ?? 0) > 0);
       if (q) list = list.filter((v) => v.raw_text.toLowerCase().includes(q));
       if (sp.get("sort") === "confidence_asc")
         list.sort((a, b) => (a.predictions[0]?.confidence ?? -1) - (b.predictions[0]?.confidence ?? -1));
@@ -568,6 +648,7 @@ const routes: [string, string, Handler][] = [
         return err(409, "invalid_state", "Задача ещё обрабатывается.", { status: v.status });
       const views = job.items.map(itemView);
       const unreviewed = views.filter((x) => x.status === "processed" || x.status === "needs_review").length;
+      const missingRequired = views.filter((x) => (x.missing_required_count ?? 0) > 0).length;
       if (url.searchParams.get("allow_unreviewed") === "false" && unreviewed)
         return err(409, "unreviewed_items", `Осталось ${unreviewed} непроверенных позиций.`, { unreviewed });
       const format = url.searchParams.get("format") ?? "source";
@@ -594,7 +675,51 @@ const routes: [string, string, Handler][] = [
         ];
       });
       const base = job.filename.replace(/\.[^.]+$/, "");
-      const headers = { "X-Unreviewed-Count": String(unreviewed) };
+      const headers = { "X-Unreviewed-Count": String(unreviewed), "X-Missing-Required-Count": String(missingRequired) };
+      if (format === "application") {
+        // «Для заявки»: строка на характеристику итогового кода, как описано в openapi.yaml /export.
+        const cols = [
+          "№ позиции",
+          "Исходное наименование",
+          "Код КТРУ",
+          "Наименование КТРУ",
+          "Характеристика",
+          "Значение",
+          "Ед. измерения",
+          "Обязательная",
+          "Источник значения",
+        ];
+        const rows: string[][] = [];
+        job.items.forEach((it, i) => {
+          const ch = charView(it);
+          const unit = it.result.extracted?.unit ?? "";
+          if (!ch.ktru_code || ch.characteristics.length === 0) {
+            rows.push([String(i + 1), it.raw_text, "", "", "", "", unit, "", ""]);
+            return;
+          }
+          for (const c of ch.characteristics) {
+            rows.push([
+              String(i + 1),
+              it.raw_text,
+              ch.ktru_code,
+              ch.name ?? "",
+              c.name,
+              c.value ?? c.found ?? (c.required ? "не заполнено" : ""),
+              unit,
+              c.required ? "да" : "нет",
+              c.value != null ? "пользователь" : c.found != null ? "текст позиции" : "",
+            ]);
+          }
+        });
+        const csv = [cols, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+        return new Response("﻿" + csv, {
+          headers: {
+            ...headers,
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": disposition(`${base}_заявка.csv`),
+          },
+        });
+      }
       if (format === "json") {
         const cols = [...job.headers, ...extra];
         const data = records.map((r) => Object.fromEntries(cols.map((c, i) => [c || `Колонка ${i + 1}`, r[i]])));
@@ -667,6 +792,49 @@ const routes: [string, string, Handler][] = [
         at: Date.now(),
       });
       return json(itemView(it));
+    },
+  ],
+
+  [
+    "GET",
+    "/items/:item_id/characteristics",
+    ({ params }) => {
+      const it = items.get(params.item_id);
+      return it ? json(charView(it)) : notFound("item", "Позиция не найдена.");
+    },
+  ],
+
+  [
+    "PUT",
+    "/items/:item_id/characteristics",
+    async ({ params, req }) => {
+      const it = items.get(params.item_id);
+      if (!it) return notFound("item", "Позиция не найдена.");
+      const body = await req.json().catch(() => null);
+      const current = charView(it);
+      if (!current.ktru_code || !body?.ktru_code || body.ktru_code !== current.ktru_code)
+        return err(409, "invalid_state", "Код позиции успели сменить. Обновите страницу и попробуйте снова.", {
+          status: "invalid_state",
+        });
+      const values = body.values;
+      if (!values || typeof values !== "object" || Object.keys(values).length === 0)
+        return err(400, "invalid_request", "Некорректный запрос: нужно поле values с хотя бы одной характеристикой.", {
+          field: "values",
+        });
+      const known = new Set(current.characteristics.map((c) => c.name));
+      for (const name of Object.keys(values)) {
+        if (!known.has(name))
+          return err(400, "invalid_request", `Характеристики «${name}» нет у этого кода.`, { field: name });
+      }
+      let codeValues = it.charValues.get(body.ktru_code);
+      if (!codeValues) {
+        codeValues = new Map();
+        it.charValues.set(body.ktru_code, codeValues);
+      }
+      for (const [name, value] of Object.entries(values as Record<string, string | null>)) {
+        codeValues.set(name, value == null || value === "" ? null : value);
+      }
+      return json(charView(it));
     },
   ],
 

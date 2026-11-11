@@ -13,6 +13,7 @@ export const keys = {
   job: (id: string) => ["job", id] as const,
   items: (id: string, params: ItemsParams) => ["items", id, params] as const,
   item: (id: string) => ["item", id] as const,
+  itemCharacteristics: (id: string) => ["item-characteristics", id] as const,
   catalogSearch: (q: string, v?: string) => ["catalog-search", q, v] as const,
   quality: ["quality"] as const,
   stats: ["stats"] as const,
@@ -122,6 +123,7 @@ export type ItemsParams = {
   q?: string;
   flag?: NonNullable<Item["flags"]>[number];
   group_id?: string;
+  missing_required?: boolean;
   sort?: "row_index" | "confidence_asc";
 };
 
@@ -144,6 +146,38 @@ export function useItem(itemId: string | null, fromList?: Item) {
     queryFn: () => unwrap(api.GET("/items/{item_id}", { params: { path: { item_id: itemId! } } })),
     enabled: !!itemId,
     placeholderData: fromList && fromList.item_id === itemId ? fromList : undefined,
+  });
+}
+
+/**
+ * Обязательные и найденные характеристики итогового кода позиции. Ключ — по позиции; после смены итогового кода
+ * (решение или ручная правка) кэш сбрасывается из DecisionQueue, и блок перезапрашивается для нового кода.
+ */
+export function useItemCharacteristics(itemId: string | null) {
+  return useQuery({
+    queryKey: keys.itemCharacteristics(itemId ?? ""),
+    queryFn: () => unwrap(api.GET("/items/{item_id}/characteristics", { params: { path: { item_id: itemId! } } })),
+    enabled: !!itemId,
+  });
+}
+
+/** Дозаполнить значение характеристики. Отвечает тем же, что GET, — обновляем кэш и счётчики задачи. */
+export function useUpdateCharacteristics() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { itemId: string; ktru_code: string; values: Record<string, string | null> }) =>
+      unwrap(
+        api.PUT("/items/{item_id}/characteristics", {
+          params: { path: { item_id: v.itemId } },
+          body: { ktru_code: v.ktru_code, values: v.values },
+        }),
+      ),
+    onSuccess: (data, v) => {
+      qc.setQueryData(keys.itemCharacteristics(v.itemId), data);
+      // Число незаполненных меняется у позиции и в сводке задачи — обновляем таблицу и счётчики.
+      qc.invalidateQueries({ queryKey: ["items"] });
+      qc.invalidateQueries({ queryKey: ["job"] });
+    },
   });
 }
 
@@ -196,7 +230,7 @@ export function useConfirmBulk(jobId: string) {
 
 // ---------------------------------------------------------------- выгрузка
 
-export type ExportFormat = "source" | "xlsx" | "csv" | "json";
+export type ExportFormat = "source" | "xlsx" | "csv" | "json" | "application";
 
 export function useExport() {
   return useMutation({
@@ -205,6 +239,7 @@ export function useExport() {
       if (!res.ok) throw toApiError(res.status, await res.json().catch(() => undefined));
       const blob = await res.blob();
       const unreviewed = Number(res.headers.get("X-Unreviewed-Count") ?? 0);
+      const missingRequired = Number(res.headers.get("X-Missing-Required-Count") ?? 0);
       const filename = parseFilename(res.headers.get("Content-Disposition")) ?? `result_${v.job.filename}`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -212,7 +247,7 @@ export function useExport() {
       a.download = filename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      return { unreviewed, filename };
+      return { unreviewed, missingRequired, filename };
     },
   });
 }

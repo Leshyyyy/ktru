@@ -70,6 +70,8 @@ export function DecisionQueueProvider({ children }: { children: ReactNode }) {
         qc.invalidateQueries({ queryKey: ["items", d.item.job_id] });
         qc.invalidateQueries({ queryKey: keys.job(d.item.job_id) });
         qc.invalidateQueries({ queryKey: keys.item(d.item.item_id) });
+        // Сменился итоговый код — блок обязательных характеристик перезапрашивается для нового кода.
+        qc.invalidateQueries({ queryKey: keys.itemCharacteristics(d.item.item_id) });
       }
     },
     [qc],

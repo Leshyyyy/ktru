@@ -16,6 +16,7 @@ import {
   Kbd,
   Loader,
   ScrollArea,
+  Select,
   Skeleton,
   Stack,
   Text,
@@ -27,12 +28,13 @@ import {
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
 import { IconArrowDown, IconArrowUp, IconCheck, IconMinus, IconSearch, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
-import { useCatalogItem, useCatalogSearch, useItem } from "../api/hooks";
-import type { CharacteristicMatch, Item, Job, Prediction } from "../api/types";
+import { useCatalogItem, useCatalogSearch, useItem, useItemCharacteristics, useUpdateCharacteristics } from "../api/hooks";
+import type { CharacteristicMatch, Item, ItemCharacteristic, Job, Prediction } from "../api/types";
 import { ConfidenceBadge, FlagChips, GroupBadge, ItemStatusBadge, KtruCode, useThresholds } from "./badges";
 import { useDecisions, useWithOverlay } from "./DecisionQueue";
 import classes from "./ItemDrawer.module.css";
-import { pct } from "../lib/format";
+import { requiredCounters } from "../lib/characteristics";
+import { CHAR_STATUS, pct } from "../lib/format";
 
 type Props = {
   itemId: string | null;
@@ -204,6 +206,8 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                 </div>
               )}
 
+              <CharacteristicsBlock item={item} />
+
               {!manual && !searchFirst && (
                 <Button
                   variant="default"
@@ -329,6 +333,170 @@ function Attributes({ item }: { item: Item }) {
         )}
       </dl>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- обязательные характеристики итогового кода
+
+/**
+ * Блок «Обязательные характеристики» для итогового кода позиции (не только первого кандидата).
+ * Данные — GET /items/{id}/characteristics; значения дозаполняются PUT прямо здесь.
+ * Пока решение по коду не ушло на сервер, ответ GET ещё про старый код — редактирование откладываем.
+ */
+function CharacteristicsBlock({ item }: { item: Item }) {
+  const code = item.final?.ktru_code;
+  const { data, isLoading, isError, error } = useItemCharacteristics(code ? item.item_id : null);
+  const update = useUpdateCharacteristics();
+  if (!code) return null;
+
+  // Решение ещё не ушло на сервер: ответ GET всё ещё про старый код — показываем загрузку, а не чужой список.
+  const stale = !!data && data.ktru_code !== code;
+  const canEdit = !stale && !isLoading && item.status !== "pending" && !update.isPending;
+  const counters = data && !stale ? requiredCounters(data.characteristics) : null;
+
+  return (
+    <div>
+      <div className={classes.sectT}>
+        <span>Обязательные характеристики</span>
+        {counters && counters.total > 0 && (
+          <span className={counters.missing > 0 ? classes.missCount : undefined}>
+            {counters.missing > 0 ? `не заполнено ${counters.missing} из ${counters.total}` : "все заполнены"}
+          </span>
+        )}
+      </div>
+      {isLoading || stale ? (
+        <Stack gap="sm">
+          {stale && (
+            <Text size="sm" c="dimmed">
+              Код ещё сохраняется — заполнять характеристики можно через мгновение.
+            </Text>
+          )}
+          <Skeleton h={64} />
+        </Stack>
+      ) : isError ? (
+        <Text size="sm" c="var(--k-lo-ink)">
+          {(error as Error).message}
+        </Text>
+      ) : !data ? null : data.characteristics.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          У этого кода нет обязательных характеристик.
+        </Text>
+      ) : (
+        <Stack gap="sm">
+          {data.characteristics.some((c) => !c.required) && (
+            <Text size="xs" c="dimmed">
+              Звёздочкой отмечены обязательные характеристики; остальные найдены в тексте позиции.
+            </Text>
+          )}
+          {data.characteristics.map((ch) => (
+            <CharRow
+              key={ch.name}
+              ch={ch}
+              canEdit={canEdit}
+              onSave={(value) => update.mutate({ itemId: item.item_id, ktru_code: code, values: { [ch.name]: value } })}
+            />
+          ))}
+          {update.isPending && (
+            <Text size="xs" c="dimmed">
+              Сохраняется…
+            </Text>
+          )}
+        </Stack>
+      )}
+    </div>
+  );
+}
+
+function CharRow({
+  ch,
+  canEdit,
+  onSave,
+}: {
+  ch: ItemCharacteristic;
+  canEdit: boolean;
+  onSave: (value: string | null) => void;
+}) {
+  const st = CHAR_STATUS[ch.status];
+  return (
+    <div className={classes.charRow}>
+      <Group justify="space-between" align="center" gap={8} wrap="nowrap">
+        <Text component="span" size="sm" fw={600} lh={1.35}>
+          {ch.name}
+          {ch.required && (
+            <Text component="span" className={classes.charReq} title="Обязательная характеристика">
+              {" *"}
+            </Text>
+          )}
+        </Text>
+        <span className={classes.charStatus} style={{ background: st.bg, color: st.ink }}>
+          {st.label}
+        </span>
+      </Group>
+      <Text size="xs" c="dimmed" mt={6}>
+        Допустимо по КТРУ: {ch.expected ?? "—"}
+      </Text>
+      {ch.found != null && (
+        <Text size="xs" c="dimmed">
+          Найдено в тексте: {ch.found}
+        </Text>
+      )}
+      {ch.required && (
+        <Box mt={8}>
+          <CharFill ch={ch} disabled={!canEdit} onSave={onSave} />
+        </Box>
+      )}
+    </div>
+  );
+}
+
+/** Поле дозаполнения: перечень значений — выбором, диапазон — текстом. Сохраняется на blur / выборе. */
+function CharFill({
+  ch,
+  disabled,
+  onSave,
+}: {
+  ch: ItemCharacteristic;
+  disabled: boolean;
+  onSave: (value: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(ch.value ?? "");
+  useEffect(() => setDraft(ch.value ?? ""), [ch.value]);
+  const values = ch.allowed_values?.length ? ch.allowed_values : null;
+  const isList = !!values && values.length > 1;
+  const commit = (next: string) => {
+    const v = next.trim();
+    if ((v || null) === (ch.value ?? null)) return;
+    onSave(v || null);
+  };
+  if (isList && values) {
+    return (
+      <Select
+        size="xs"
+        data={values}
+        value={draft}
+        onChange={(v) => {
+          setDraft(v ?? "");
+          commit(v ?? "");
+        }}
+        placeholder={ch.expected ?? "Выберите значение"}
+        disabled={disabled}
+        allowDeselect
+        clearable
+        aria-label={`Значение характеристики «${ch.name}»`}
+      />
+    );
+  }
+  return (
+    <TextInput
+      size="xs"
+      placeholder={ch.expected ?? "Введите значение"}
+      value={draft}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onBlur={() => commit(draft)}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      disabled={disabled}
+      aria-label={`Значение характеристики «${ch.name}»`}
+    />
   );
 }
 

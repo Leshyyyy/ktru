@@ -123,7 +123,7 @@ function matchChars(c: MockCatalogItem, text: string): CharacteristicMatch[] {
     const m = ch.pattern?.exec(text);
     return {
       name: ch.name,
-      expected: ch.values.join(", "),
+      expected: ch.values.join("; "),
       found: m ? m[0].trim() : null,
       status: m ? "match" : "missing",
       required: ch.required,
@@ -187,7 +187,7 @@ export function classify(text: string, columns: Record<string, string> = {}): Mo
           : s === 0
             ? `В тексте нет признаков товара «${c.name}».`
             : `Наименование совпало слабее, чем у «${ranked[0].c.name}».`,
-      characteristic_matches: i === 0 ? matches : [],
+      characteristic_matches: matches,
     };
   });
 
