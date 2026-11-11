@@ -446,11 +446,10 @@ function CharRow({
           Найдено в тексте: {ch.found}
         </Text>
       )}
-      {ch.required && (
-        <Box mt={8}>
-          <CharFill ch={ch} disabled={!canEdit} onSave={onSave} />
-        </Box>
-      )}
+      {/* Поле у всех строк: необязательную характеристику тоже можно дозаполнить и убрать введённое. */}
+      <Box mt={8}>
+        <CharFill ch={ch} disabled={!canEdit} onSave={onSave} />
+      </Box>
     </div>
   );
 }
@@ -468,7 +467,10 @@ function CharFill({
   const [draft, setDraft] = useState(ch.value ?? "");
   useEffect(() => setDraft(ch.value ?? ""), [ch.value]);
   const values = ch.allowed_values?.length ? ch.allowed_values : null;
-  const isList = !!values && values.length > 1;
+  // Выпадающий список только для перечня значений; диапазоны («< 200», «≥ 200 и ≤ 300») — текстовым полем,
+  // чтобы пользователь вводил конкретное значение, а не выбирал диапазон.
+  const isRange = (v: string) => /^[<>≤≥]|\sи\s/.test(v);
+  const isList = !!values && values.length > 1 && !values.some(isRange);
   const commit = (next: string) => {
     const v = next.trim();
     if ((v || null) === (ch.value ?? null)) return;

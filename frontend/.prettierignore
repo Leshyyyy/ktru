@@ -1,0 +1,2 @@
+# Сгенерированный из contracts/openapi.yaml — не форматируем prettier (пересоздаётся командой npm run gen:api).
+src/api/schema.d.ts

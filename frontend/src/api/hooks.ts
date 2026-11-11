@@ -174,9 +174,11 @@ export function useUpdateCharacteristics() {
       ),
     onSuccess: (data, v) => {
       qc.setQueryData(keys.itemCharacteristics(v.itemId), data);
-      // Число незаполненных меняется у позиции и в сводке задачи — обновляем таблицу и счётчики.
+      // Число незаполненных меняется у позиции, в сводке задачи и комплекта — обновляем таблицу и счётчики.
       qc.invalidateQueries({ queryKey: ["items"] });
       qc.invalidateQueries({ queryKey: ["job"] });
+      qc.invalidateQueries({ queryKey: ["batch"] });
+      qc.invalidateQueries({ queryKey: ["batches"] });
     },
   });
 }

@@ -70,7 +70,7 @@ export const CHAR_STATUS: Record<CharStatus, { label: string; bg: string; ink: s
   match: { label: "Подходит", bg: "var(--k-hi-bg)", ink: "var(--k-hi-ink)" },
   mismatch: { label: "Не подходит", bg: "var(--k-mid-bg)", ink: "var(--k-mid-ink)" },
   missing: { label: "Не заполнена", bg: "var(--k-lo-bg)", ink: "var(--k-lo-ink)" },
-  filled: { label: "Заполнена", bg: "var(--k-cor-bg)", ink: "var(--k-cor)" },
+  filled: { label: "Заполнена вручную", bg: "var(--k-cor-bg)", ink: "var(--k-cor)" },
 };
 
 export const ROLE: Record<ColumnRole, string> = {
