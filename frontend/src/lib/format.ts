@@ -1,4 +1,4 @@
-import type { Band, ColumnRole, ItemFlag, ItemStatus, JobStatus } from "../api/types";
+import type { Band, BatchStatus, ColumnRole, ItemFlag, ItemStatus, JobStatus } from "../api/types";
 
 /**
  * Проценты округляем вниз, а не к ближайшему: уверенность 0.846 — это «84%». Иначе жёлтая позиция показывалась
@@ -30,6 +30,14 @@ export const JOB_STATUS: Record<JobStatus, { label: string; color: string }> = {
   done_with_errors: { label: "Готово, есть ошибки", color: "orange" },
   failed: { label: "Ошибка", color: "red" },
   cancelled: { label: "Отменена", color: "gray" },
+};
+
+export const BATCH_STATUS: Record<BatchStatus, { label: string; color: string }> = {
+  processing: { label: "Обработка", color: "blue" },
+  done: { label: "Готово", color: "teal" },
+  done_with_errors: { label: "Готово, есть ошибки", color: "orange" },
+  failed: { label: "Ошибка", color: "red" },
+  cancelled: { label: "Отменён", color: "gray" },
 };
 
 export const ITEM_STATUS: Record<ItemStatus, { label: string; color: string }> = {

@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, rawFetch, toApiError, unwrap, ApiRequestError } from "./client";
-import type { ColumnMappingEntry, FileInfo, Item, Job, JobStatus } from "./types";
+import type { Batch, ColumnMappingEntry, FileInfo, Item, Job, JobCreate, JobStatus } from "./types";
 
 /** Статусы, в которых задача ещё идёт: пока так — опрашиваем её раз в 1,5 с (как просит контракт). */
 export const ACTIVE_STATUSES: JobStatus[] = ["queued", "parsing", "processing"];
@@ -11,6 +11,8 @@ export const keys = {
   health: ["health"] as const,
   jobs: (page: number) => ["jobs", page] as const,
   job: (id: string) => ["job", id] as const,
+  batches: (page: number) => ["batches", page] as const,
+  batch: (id: string) => ["batch", id] as const,
   items: (id: string, params: ItemsParams) => ["items", id, params] as const,
   item: (id: string) => ["item", id] as const,
   catalogSearch: (q: string, v?: string) => ["catalog-search", q, v] as const,
@@ -82,6 +84,14 @@ export function useJobs(page: number) {
   });
 }
 
+/** Задачи одного комплекта (все, без постраничности — комплекты пока небольшие). */
+export function useJobsInBatch(batchId: string) {
+  return useQuery({
+    queryKey: ["jobs-batch", batchId] as const,
+    queryFn: () => unwrap(api.GET("/jobs", { params: { query: { batch_id: batchId, page_size: 100 } } })),
+  });
+}
+
 export function useJob(jobId: string) {
   return useQuery({
     queryKey: keys.job(jobId),
@@ -112,6 +122,34 @@ export function useDeleteJob() {
   });
 }
 
+// ---------------------------------------------------------------- комплекты
+
+export function useCreateBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name?: string | null; jobs: JobCreate[] }) => unwrap(api.POST("/batches", { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["batches"] }),
+  });
+}
+
+export function useBatches(page: number) {
+  return useQuery({
+    queryKey: keys.batches(page),
+    queryFn: () => unwrap(api.GET("/batches", { params: { query: { page, page_size: 20 } } })),
+    placeholderData: keepPreviousData,
+    // Пока хоть один комплект обрабатывается — обновляем прогресс.
+    refetchInterval: (q) => (q.state.data?.items.some((b) => b.status === "processing") ? 2000 : false),
+  });
+}
+
+export function useBatch(batchId: string) {
+  return useQuery({
+    queryKey: keys.batch(batchId),
+    queryFn: () => unwrap(api.GET("/batches/{batch_id}", { params: { path: { batch_id: batchId } } })),
+    refetchInterval: (q) => (q.state.data?.status === "processing" ? 1500 : false),
+  });
+}
+
 // ---------------------------------------------------------------- позиции
 
 export type ItemsParams = {
@@ -122,6 +160,7 @@ export type ItemsParams = {
   q?: string;
   flag?: NonNullable<Item["flags"]>[number];
   group_id?: string;
+  missing_required?: boolean;
   sort?: "row_index" | "confidence_asc";
 };
 
@@ -224,6 +263,30 @@ function parseFilename(header: string | null): string | null {
   if (star) return decodeURIComponent(star[1]);
   const plain = /filename="?([^";]+)"?/i.exec(header);
   return plain ? plain[1] : null;
+}
+
+/** Форматы выгрузки комплекта: без `source` — исходные колонки у файлов разные (см. openapi.yaml). */
+export type BatchExportFormat = "xlsx" | "csv" | "json" | "application";
+
+export function useBatchExport() {
+  return useMutation({
+    mutationFn: async (v: { batch: Batch; format: BatchExportFormat }) => {
+      const res = await rawFetch(`/batches/${v.batch.batch_id}/export?format=${v.format}&allow_unreviewed=true`);
+      if (!res.ok) throw toApiError(res.status, await res.json().catch(() => undefined));
+      const blob = await res.blob();
+      const unreviewed = Number(res.headers.get("X-Unreviewed-Count") ?? 0);
+      const missingRequired = Number(res.headers.get("X-Missing-Required-Count") ?? 0);
+      const name = v.batch.name?.trim() || "komplekt";
+      const filename = parseFilename(res.headers.get("Content-Disposition")) ?? `result_${name}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { unreviewed, missingRequired, filename };
+    },
+  });
 }
 
 // ---------------------------------------------------------------- каталог, быстрая проверка, качество

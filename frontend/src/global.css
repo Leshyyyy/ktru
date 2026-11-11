@@ -179,3 +179,35 @@ body {
   padding-bottom: 16px;
   background: var(--mantine-color-body);
 }
+
+/* Иконки статуса файла в списке загрузки: ок / ошибка / нейтральная. */
+.k-ico-ok {
+  color: var(--k-hi-ink);
+}
+.k-ico-err {
+  color: var(--k-lo-ink);
+}
+.k-ico-dim {
+  color: var(--k-muted);
+}
+
+/* Группа файла на странице комплекта: заголовок-строка и таблица позиций под ним. */
+.k-batch-group {
+  border-bottom: 1px solid var(--k-line);
+}
+.k-batch-group:last-child {
+  border-bottom: 0;
+}
+.k-batch-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--k-surface-2);
+  color: var(--k-ink);
+  cursor: pointer;
+}
+.k-batch-hdr:hover {
+  background: var(--k-primary-tint);
+}
