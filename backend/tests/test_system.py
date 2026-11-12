@@ -168,7 +168,13 @@ def test_config_endpoint_matches_contract(api: tuple[TestClient, dict[str, Any]]
     body = client.get("/api/v1/config").json()
     assert_matches_schema("PublicConfig", body)
     assert body == {
-        "limits": {"max_file_mb": 50, "max_rows": 5000, "max_items_per_job": 1000, "classify_max_items": 20},
+        "limits": {
+            "max_file_mb": 50,
+            "max_rows": 5000,
+            "max_items_per_job": 1000,
+            "max_files_per_batch": 10,
+            "classify_max_items": 20,
+        },
         "thresholds": {"green": 0.70, "yellow": 0.5},
         "mode": {"extractor": "hybrid", "reranker": "cross_encoder", "device": "cpu", "llm_enabled": True},
     }

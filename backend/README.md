@@ -97,8 +97,28 @@ curl -s -o application.xlsx "$API/jobs/$JOB/export?format=application"
 curl -s "$API/jobs/$JOB/export?allow_unreviewed=false" | jq .error   # 409 unreviewed_items, если такие остались
 ```
 
-Файл «для заявки» пока собирает `backend/core/application_export.py`: маршрут вызывает его, если файловый модуль
-ещё не поддерживает `application`. Когда генератор появится в `backend/files`, вызов заменится без изменения API.
+Формат `application` собирает `backend/files` через `export_job_results`.
+
+**Комплект файлов.** Загрузите файлы через `POST /files` и сохраните их `file_id` в `FILE1` и `FILE2`, затем создайте
+комплект из обычных задач. Максимум файлов
+показывает `/config` в `limits.max_files_per_batch` (по умолчанию 10). В ответе `jobs` идут в порядке создания;
+каждую задачу можно открыть, отменить или удалить обычными маршрутами. `GET /batches/{id}` возвращает общие
+статус, прогресс и сводку. Экспорт доступен после завершения или отмены всех задач комплекта.
+
+```bash
+curl -s "$API/config" | jq .limits.max_files_per_batch
+curl -s -X POST "$API/batches" -H 'Content-Type: application/json' -d '{
+  "name": "Закупка оргтехники",
+  "jobs": [
+    {"file_id": "'"$FILE1"'", "column_mapping": [{"index": 0, "role": "name"}]},
+    {"file_id": "'"$FILE2"'", "column_mapping": [{"index": 0, "role": "name"}]}
+  ]
+}' | tee batch.json | jq '{batch_id, status, jobs: [.jobs[].job_id]}'
+BATCH=$(jq -r .batch_id batch.json)
+curl -s "$API/batches/$BATCH" | jq '{status, progress, summary}'
+curl -s "$API/jobs?batch_id=$BATCH&page_size=100" | jq '.items[].job_id'
+curl -s -D batch-headers.txt -o batch.xlsx "$API/batches/$BATCH/export?format=application"
+```
 
 **8. Быстрая проверка** — до 20 строк сразу, без задачи и без сохранения (экран загрузки).
 

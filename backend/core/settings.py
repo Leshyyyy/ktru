@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     max_file_mb: int = Field(50, gt=0)
     max_rows: int = Field(5000, gt=0)
     max_items_per_job: int = Field(1000, gt=0)
+    max_files_per_batch: int = Field(10, gt=0)
     classify_max_items: int = Field(20, gt=0)
     # Сколько POST /classify ждёт ответа worker-ml (он может досчитывать пачку большой задачи), секунд.
     classify_timeout_s: float = Field(30, gt=0)
