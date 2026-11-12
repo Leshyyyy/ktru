@@ -281,7 +281,7 @@ function BatchFileGroup({
   const PAGE = 200;
   const active = ["queued", "parsing", "processing"].includes(job.status);
   const f = filters;
-  const { data, isFetching, fetchNextPage, hasNextPage } = useInfiniteQuery({
+  const { data, isFetching, fetchNextPage, hasNextPage, refetch } = useInfiniteQuery({
     queryKey: ["batch-items", job.job_id, f.band, f.status, f.flag, f.missing_required, f.sort, f.q],
     queryFn: ({ pageParam = 1 }) =>
       unwrap(
@@ -309,6 +309,13 @@ function BatchFileGroup({
   const items = (data?.pages ?? [])
     .flatMap((p) => p.items)
     .filter((it) => (seen.has(it.item_id) ? false : (seen.add(it.item_id), true)));
+
+  // Перезапрашиваем группу при смене статуса/счётчика задачи: когда обработка закончилась, последний
+  // опрос мог прийти до записи результатов, и строка осталась бы «В очереди / ожидает обработки».
+  useEffect(() => {
+    void refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.status, job.processed_items, refetch]);
 
   // Пустую группу под фильтром скрываем.
   if (items.length === 0 && !active && (f.band || f.status || f.flag || f.missing_required || f.q)) return null;

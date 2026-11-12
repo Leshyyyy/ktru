@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import {
   isActive,
+  useBatch,
   useCancelJob,
   useConfirmBulk,
   useExport,
@@ -36,7 +37,7 @@ import {
   type ExportFormat,
   type ItemsParams,
 } from "../api/hooks";
-import type { Band, ItemFlag, ItemStatus, Job } from "../api/types";
+import type { Band, Batch, ItemFlag, ItemStatus, Job } from "../api/types";
 import { JobStatusBadge, useThresholds } from "../components/badges";
 import { useWithOverlay } from "../components/DecisionQueue";
 import { ExportMenu } from "../components/ExportMenu";
@@ -76,13 +77,26 @@ export function JobPage() {
   return <JobView job={job} />;
 }
 
-/** Хлебные крошки: «Задачи / Спецификация.xlsx». */
-function BackLink({ name }: { name?: string }) {
+/** Хлебные крошки: «Задачи / Комплект «…» / Спецификация.xlsx». */
+function BackLink({ name, batch }: { name?: string; batch?: Pick<Batch, "batch_id" | "name"> | null }) {
   return (
-    <Text size="sm" c="var(--k-faint)">
+    <Text size="sm" c="var(--k-faint)" style={{ overflowWrap: "anywhere" }}>
       <Anchor component={Link} to="/jobs" size="sm" c="dimmed" underline="hover">
         Задачи
       </Anchor>
+      {batch && (
+        <>
+          {" / "}
+          <Anchor component={Link} to={`/batches/${batch.batch_id}`} size="sm" c="dimmed" underline="hover">
+            Комплект{" "}
+            {batch.name ? (
+              <Text component="span" inherit>
+                «{batch.name}»
+              </Text>
+            ) : null}
+          </Anchor>
+        </>
+      )}
       {name && ` / ${name}`}
     </Text>
   );
@@ -92,6 +106,8 @@ function JobView({ job }: { job: Job }) {
   const active = isActive(job.status);
   const finished = ["done", "done_with_errors", "cancelled"].includes(job.status);
   const [sp, setSp] = useSearchParams();
+  // Хлебные крошки с названием комплекта, если задача из комплекта (пустой id — запрос не используем).
+  const batchQuery = useBatch(job.batch_id ?? "");
   // Выгрузка — как раньше внутри ExportMenu, теперь колбэком в общий компонент.
   const expMutation = useExport();
   const exp = async (format: ExportFormat) => {
@@ -200,7 +216,7 @@ function JobView({ job }: { job: Job }) {
       style={split ? { marginRight: `calc(${DRAWER_W - 24}px - max(0px, (100vw - 1440px) / 2))` } : undefined}
     >
       <Stack gap={6}>
-        <BackLink name={job.filename} />
+        <BackLink name={job.filename} batch={job.batch_id && batchQuery.data ? batchQuery.data : null} />
         <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
           <div style={{ minWidth: 0 }}>
             <Group gap="sm" wrap="wrap">
