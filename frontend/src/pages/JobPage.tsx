@@ -1,9 +1,7 @@
 import {
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
-  Box,
   Button,
   Card,
   Center,
@@ -13,37 +11,24 @@ import {
   Menu,
   NumberInput,
   Pagination,
-  Progress,
-  ScrollArea,
-  SimpleGrid,
   Skeleton,
   Stack,
   Switch,
-  Table,
   Text,
   TextInput,
   Title,
   Tooltip,
-  UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys, useMediaQuery } from "@mantine/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import {
-  IconCheck,
-  IconChecks,
-  IconDownload,
-  IconInfoCircle,
-  IconListCheck,
-  IconPlayerStop,
-  IconSearch,
-  IconUser,
-} from "@tabler/icons-react";
-import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { IconChecks, IconInfoCircle, IconListCheck, IconPlayerStop, IconSearch } from "@tabler/icons-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import {
   isActive,
+  useBatch,
   useCancelJob,
   useConfirmBulk,
   useExport,
@@ -52,21 +37,17 @@ import {
   type ExportFormat,
   type ItemsParams,
 } from "../api/hooks";
-import type { Band, Item, ItemFlag, ItemStatus, Job } from "../api/types";
-import {
-  ConfidenceBadge,
-  FlagChips,
-  GroupBadge,
-  ItemStatusBadge,
-  JobStatusBadge,
-  KtruCode,
-  MissingRequiredBadge,
-  useThresholds,
-} from "../components/badges";
-import { useDecisions, useWithOverlay } from "../components/DecisionQueue";
+import type { Band, Batch, ItemFlag, ItemStatus, Job } from "../api/types";
+import { JobStatusBadge, useThresholds } from "../components/badges";
+import { useWithOverlay } from "../components/DecisionQueue";
+import { ExportMenu } from "../components/ExportMenu";
+import { FilterChip } from "../components/FilterChip";
 import { ItemDrawer } from "../components/ItemDrawer";
-import { BAND, dateTime, duration, FLAG, pct, pctInt, plural } from "../lib/format";
-import { isReviewed, reviewedStatus } from "../lib/review";
+import { ItemsTable } from "../components/ItemsTable";
+import { ProgressCard } from "../components/ProgressCard";
+import { Summary } from "../components/Summary";
+import { dateTime, duration, FLAG, pct, pctInt, plural } from "../lib/format";
+import { isReviewed } from "../lib/review";
 
 const PAGE_SIZE = 50;
 /** Ширина карточки позиции (ItemDrawer) — на широком экране страница отступает на неё, таблица не закрыта. */
@@ -96,13 +77,26 @@ export function JobPage() {
   return <JobView job={job} />;
 }
 
-/** Хлебные крошки: «Задачи / Спецификация.xlsx». */
-function BackLink({ name }: { name?: string }) {
+/** Хлебные крошки: «Задачи / Комплект «…» / Спецификация.xlsx». */
+function BackLink({ name, batch }: { name?: string; batch?: Pick<Batch, "batch_id" | "name"> | null }) {
   return (
-    <Text size="sm" c="var(--k-faint)">
+    <Text size="sm" c="var(--k-faint)" style={{ overflowWrap: "anywhere" }}>
       <Anchor component={Link} to="/jobs" size="sm" c="dimmed" underline="hover">
         Задачи
       </Anchor>
+      {batch && (
+        <>
+          {" / "}
+          <Anchor component={Link} to={`/batches/${batch.batch_id}`} size="sm" c="dimmed" underline="hover">
+            Комплект{" "}
+            {batch.name ? (
+              <Text component="span" inherit>
+                «{batch.name}»
+              </Text>
+            ) : null}
+          </Anchor>
+        </>
+      )}
       {name && ` / ${name}`}
     </Text>
   );
@@ -112,6 +106,14 @@ function JobView({ job }: { job: Job }) {
   const active = isActive(job.status);
   const finished = ["done", "done_with_errors", "cancelled"].includes(job.status);
   const [sp, setSp] = useSearchParams();
+  // Хлебные крошки с названием комплекта, если задача из комплекта (пустой id — запрос не используем).
+  const batchQuery = useBatch(job.batch_id ?? "");
+  // Выгрузка — как раньше внутри ExportMenu, теперь колбэком в общий компонент.
+  const expMutation = useExport();
+  const exp = async (format: ExportFormat) => {
+    const r = await expMutation.mutateAsync({ job, format });
+    return { unreviewed: r.unreviewed, missingRequired: r.missingRequired };
+  };
 
   // Фильтры живут в адресе страницы: ссылкой «покажи красные» можно поделиться, и они переживают обновление.
   const band = (sp.get("band") as Band | null) ?? undefined;
@@ -214,7 +216,7 @@ function JobView({ job }: { job: Job }) {
       style={split ? { marginRight: `calc(${DRAWER_W - 24}px - max(0px, (100vw - 1440px) / 2))` } : undefined}
     >
       <Stack gap={6}>
-        <BackLink name={job.filename} />
+        <BackLink name={job.filename} batch={job.batch_id && batchQuery.data ? batchQuery.data : null} />
         <Group justify="space-between" align="flex-start" wrap="wrap" gap="md">
           <div style={{ minWidth: 0 }}>
             <Group gap="sm" wrap="wrap">
@@ -246,7 +248,8 @@ function JobView({ job }: { job: Job }) {
             {!active && (job.summary.green ?? 0) > 0 && <BulkConfirm job={job} />}
             {/* Пока есть спорные, главное — проверка; когда их нет, главной становится выгрузка. */}
             <ExportMenu
-              job={job}
+              onExport={(format) => exp(format)}
+              missing={job.summary.missing_required ?? 0}
               disabled={!finished}
               emphasis={disputed === 0}
               onShowMissing={() => setParam("missing_required", "true")}
@@ -268,14 +271,28 @@ function JobView({ job }: { job: Job }) {
         </Alert>
       )}
 
-      {active && <ProgressCard job={job} />}
+      {active && (
+        <ProgressCard
+          status={job.status as "queued" | "parsing" | "processing"}
+          processed={job.processed_items + job.failed_items}
+          total={job.total_items}
+          progress={job.progress}
+          etaSeconds={job.eta_seconds}
+          hint="Вкладку можно закрыть: обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно проверять сразу."
+        />
+      )}
 
       <Summary
-        job={job}
+        total_items={job.total_items}
+        failed_items={job.failed_items}
+        summary={job.summary}
         band={band}
         status={status}
+        missingRequiredActive={missingRequired}
+        showMissingRequired
         onBand={(b) => setParam("band", b)}
         onStatus={(s) => setParam("status", s)}
+        onMissingRequired={() => setParam("missing_required", missingRequired ? null : "true")}
       />
 
       <Card p={0}>
@@ -423,334 +440,6 @@ function JobView({ job }: { job: Job }) {
   );
 }
 
-// ---------------------------------------------------------------- прогресс и сводка
-
-function ProgressCard({ job }: { job: Job }) {
-  const done = job.processed_items + job.failed_items;
-  const label =
-    job.status === "queued"
-      ? "Задача в очереди, сейчас начнётся"
-      : job.status === "parsing"
-        ? "Читаем файл и считаем позиции"
-        : `Обработано ${done} из ${job.total_items}`;
-  return (
-    <Card>
-      <Stack gap="xs">
-        <Group justify="space-between">
-          <Text fw={600}>{label}</Text>
-          <Text size="sm" c="dimmed" className="tabular">
-            {job.eta_seconds != null ? `осталось ≈ ${duration(job.eta_seconds)}` : ""}
-          </Text>
-        </Group>
-        <Progress
-          value={Math.max(job.progress * 100, job.status === "processing" ? 2 : 0)}
-          size="lg"
-          animated
-          striped
-        />
-        <Text size="xs" c="dimmed">
-          Вкладку можно закрыть: обработка продолжится на сервере. Готовые позиции уже видны в таблице ниже, их можно
-          проверять сразу.
-        </Text>
-      </Stack>
-    </Card>
-  );
-}
-
-function Summary({
-  job,
-  band,
-  status,
-  onBand,
-  onStatus,
-}: {
-  job: Job;
-  band?: Band;
-  status?: ItemStatus;
-  onBand: (b: Band | null) => void;
-  onStatus: (s: ItemStatus | null) => void;
-}) {
-  const t = useThresholds();
-  const s = job.summary;
-  const reviewed = (s.confirmed ?? 0) + (s.corrected ?? 0);
-  const tiles: { key: Band; label: string; value: number; hint: string }[] = [
-    { key: "green", label: "Зелёные", value: s.green ?? 0, hint: `уверенность от ${pct(t.green)}` },
-    { key: "yellow", label: "Жёлтые", value: s.yellow ?? 0, hint: `уверенность ${pct(t.yellow)}–${pct(t.green)}` },
-    { key: "red", label: "Красные", value: s.red ?? 0, hint: `уверенность ниже ${pct(t.yellow)}` },
-  ];
-  return (
-    <SimpleGrid cols={{ base: 2, sm: 5 }} spacing={12}>
-      <Tile
-        active={false}
-        onClick={() => (onBand(null), onStatus(null))}
-        label="Всего позиций"
-        value={job.total_items}
-      />
-      {tiles.map((x) => (
-        <Tile
-          key={x.key}
-          active={band === x.key}
-          onClick={() => onBand(band === x.key ? null : x.key)}
-          color={`var(--k-${ZONE[x.key]})`}
-          ink={`var(--k-${ZONE[x.key]}-ink)`}
-          label={x.label}
-          value={x.value}
-          hint={`${BAND[x.key].hint}: ${x.hint}`}
-        />
-      ))}
-      <Tile
-        active={isReviewed(status)}
-        onClick={() => onStatus(isReviewed(status) ? null : reviewedStatus(s))}
-        color="var(--k-cor)"
-        label="Проверено"
-        value={reviewed}
-        hint={`${s.confirmed ?? 0} подтверждено, ${s.corrected ?? 0} исправлено${job.failed_items ? `, ${job.failed_items} с ошибкой` : ""}`}
-      />
-    </SimpleGrid>
-  );
-}
-
-const ZONE: Record<Band, "hi" | "mid" | "lo"> = { green: "hi", yellow: "mid", red: "lo" };
-
-function Tile(p: {
-  active: boolean;
-  onClick: () => void;
-  /** Цвет зоны для квадратика-метки. */
-  color?: string;
-  /** Цвет числа: тёмный вариант зоны, чтобы контраст был не ниже 4.5:1. */
-  ink?: string;
-  label: string;
-  value: number;
-  hint?: string;
-}) {
-  const body = (
-    <UnstyledButton onClick={p.onClick} aria-pressed={p.active} className="k-tile" data-active={p.active || undefined}>
-      <Text fz={24} fw={600} className="tabular" lh={1.2} c={p.ink ?? p.color}>
-        {p.value}
-      </Text>
-      <Group gap={8} wrap="nowrap">
-        {p.color && <Box w={9} h={9} style={{ borderRadius: 3, background: p.color, flex: "none" }} />}
-        <Text size="sm" c="dimmed">
-          {p.label}
-        </Text>
-      </Group>
-    </UnstyledButton>
-  );
-  return p.hint ? <Tooltip label={p.hint}>{body}</Tooltip> : body;
-}
-
-/** Фильтр-чип из макета: выбранный подсвечен лаймовым. */
-const FilterChip = forwardRef<HTMLButtonElement, { active: boolean; onClick?: () => void; children: ReactNode }>(
-  function FilterChip({ active, onClick, children, ...rest }, ref) {
-    return (
-      // Menu.Target передаёт свои className и обработчики — объединяем, а не затираем.
-      <UnstyledButton
-        ref={ref}
-        {...rest}
-        className={["k-chip", (rest as { className?: string }).className].filter(Boolean).join(" ")}
-        data-active={active || undefined}
-        onClick={onClick ?? (rest as { onClick?: () => void }).onClick}
-      >
-        {children}
-      </UnstyledButton>
-    );
-  },
-);
-
-// ---------------------------------------------------------------- таблица
-
-function ItemsTable({
-  items,
-  loading,
-  fetching,
-  selectedId,
-  compact,
-  onOpen,
-  onGroup,
-}: {
-  items?: Item[];
-  loading: boolean;
-  fetching: boolean;
-  selectedId: string | null;
-  /** Рядом открыта карточка: без «Кол-во», уверенность и статус в одной колонке — таблица помещается целиком. */
-  compact: boolean;
-  onOpen: (id: string) => void;
-  onGroup: (groupId: string) => void;
-}) {
-  const { decide } = useDecisions();
-  const withOverlay = useWithOverlay();
-  const t = useThresholds();
-  const cols = compact ? 4 : 7;
-  // Карточка открыта (J/K, переход к следующей спорной) — выбранная строка всегда в поле зрения.
-  useEffect(() => {
-    if (!selectedId) return;
-    document.querySelector(`[data-item-id="${selectedId}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [selectedId]);
-  return (
-    <ScrollArea type="auto">
-      <Table
-        className="k-table"
-        highlightOnHover
-        verticalSpacing={10}
-        horizontalSpacing={12}
-        miw={compact ? 560 : 1040}
-        style={{ opacity: fetching && !loading ? 0.85 : 1, transition: "opacity .2s" }}
-      >
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th w={compact ? 52 : 64}>Стр.</Table.Th>
-            <Table.Th>{compact ? "Позиция" : "Позиция и извлечённые атрибуты"}</Table.Th>
-            {!compact && <Table.Th w={90}>Кол-во</Table.Th>}
-            <Table.Th w={compact ? 200 : 300}>Код КТРУ</Table.Th>
-            {compact ? (
-              <Table.Th w={140}>Уверенность</Table.Th>
-            ) : (
-              <>
-                <Table.Th w={130}>Уверенность</Table.Th>
-                <Table.Th w={190}>Статус</Table.Th>
-              </>
-            )}
-            {/* Рядом открыта карточка — решения принимаются в ней, быстрая кнопка в строке не нужна. */}
-            {!compact && <Table.Th w={52} />}
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {loading &&
-            Array.from({ length: 6 }).map((_, i) => (
-              <Table.Tr key={i}>
-                <Table.Td colSpan={cols}>
-                  <Skeleton h={34} />
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          {items?.map(withOverlay).map((it) => {
-            // Быстрое подтверждение из таблицы — только когда система уверена хотя бы на жёлтый порог;
-            // красную позицию подтверждают из карточки, сравнив варианты.
-            const unsure = (it.predictions[0]?.confidence ?? 0) < t.yellow;
-            const canConfirm = (it.status === "processed" || it.status === "needs_review") && !unsure;
-            return (
-              <Table.Tr
-                key={it.item_id}
-                data-item-id={it.item_id}
-                className={`row-clickable${selectedId === it.item_id ? " row-selected" : ""}`}
-                onClick={() => onOpen(it.item_id)}
-              >
-                <Table.Td>
-                  <Text size="sm" c="dimmed" className="tabular">
-                    {it.row_index + 1}
-                  </Text>
-                </Table.Td>
-                <Table.Td style={{ overflowWrap: "anywhere" }}>
-                  {/* Текст позиции не обрезаем: по нему проверяют код. Рядом с карточкой (там он целиком)
-                      строка короче: только извлечённые наименование, бренд и модель. */}
-                  {!(compact && it.extracted) && <Text size="sm">{it.raw_text}</Text>}
-                  <Text size={compact ? "sm" : "xs"} c="dimmed" mt={compact ? 0 : 2} component="div">
-                    {it.extracted && (
-                      <>
-                        <Text span inherit fw={600} c="var(--k-ink)">
-                          {it.extracted.name}
-                        </Text>
-                        {[it.extracted.brand, it.extracted.model].filter(Boolean).map((v) => ` · ${v}`)}
-                      </>
-                    )}
-                    {it.group_id && (
-                      <Box component="span" ml={6}>
-                        <GroupBadge size={it.group_size ?? 1} onClick={() => onGroup(it.group_id!)} />
-                      </Box>
-                    )}
-                  </Text>
-                </Table.Td>
-                {!compact && (
-                  <Table.Td>
-                    <Text size="sm" c="dimmed" className="tabular" style={{ whiteSpace: "nowrap" }}>
-                      {it.extracted?.quantity != null ? `${it.extracted.quantity} ${it.extracted.unit ?? ""}` : "—"}
-                    </Text>
-                  </Table.Td>
-                )}
-                <Table.Td>
-                  {it.status === "pending" ? (
-                    <Text size="sm" c="dimmed">
-                      ожидает обработки
-                    </Text>
-                  ) : it.status === "failed" && !it.final?.ktru_code ? (
-                    <Text size="sm" c="var(--k-lo-ink)">
-                      {it.error ?? "Ошибка обработки"}
-                    </Text>
-                  ) : (
-                    <div style={{ minWidth: 0 }}>
-                      <Group gap={6} wrap="nowrap">
-                        <KtruCode code={it.final?.ktru_code} />
-                        {it.final?.source === "user" && (
-                          <Tooltip label="Код выбран человеком">
-                            <IconUser size={14} color="var(--k-cor)" />
-                          </Tooltip>
-                        )}
-                      </Group>
-                      <Text size="xs" c="dimmed" mt={2}>
-                        {it.final?.name}
-                      </Text>
-                    </div>
-                  )}
-                </Table.Td>
-                {compact ? (
-                  <Table.Td>
-                    <ConfidenceBadge value={it.predictions[0]?.confidence} />
-                    <Box mt={6}>
-                      <ItemStatusBadge status={it.status} />
-                      {it.missing_required_count ? (
-                        <Box mt={4}>
-                          <MissingRequiredBadge count={it.missing_required_count} />
-                        </Box>
-                      ) : null}
-                    </Box>
-                  </Table.Td>
-                ) : (
-                  <>
-                    <Table.Td>
-                      <ConfidenceBadge value={it.predictions[0]?.confidence} />
-                    </Table.Td>
-                    <Table.Td>
-                      <ItemStatusBadge status={it.status} />
-                      <FlagChips flags={it.flags} />
-                      {it.missing_required_count ? (
-                        <Box mt={4}>
-                          <MissingRequiredBadge count={it.missing_required_count} />
-                        </Box>
-                      ) : null}
-                    </Table.Td>
-                  </>
-                )}
-                {!compact && (
-                  <Table.Td onClick={(e) => e.stopPropagation()}>
-                    {canConfirm && it.predictions[0] && (
-                      <Tooltip label="Подтвердить предложенный код">
-                        <ActionIcon
-                          variant="light"
-                          onClick={() =>
-                            decide({
-                              kind: "confirm",
-                              item: it,
-                              code: it.predictions[0].ktru_code,
-                              name: it.predictions[0].name,
-                            })
-                          }
-                          aria-label="Подтвердить"
-                        >
-                          <IconCheck size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                    )}
-                  </Table.Td>
-                )}
-              </Table.Tr>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
-    </ScrollArea>
-  );
-}
-
 // ---------------------------------------------------------------- действия с задачей
 
 function CancelButton({ job }: { job: Job }) {
@@ -839,107 +528,5 @@ function BulkConfirm({ job }: { job: Job }) {
     <Button variant="default" leftSection={<IconChecks size={16} />} onClick={open} loading={bulk.isPending}>
       Подтвердить все от {pct(t.green)}
     </Button>
-  );
-}
-
-function ExportMenu({
-  job,
-  disabled,
-  emphasis,
-  onShowMissing,
-}: {
-  job: Job;
-  disabled: boolean;
-  emphasis: boolean;
-  /** «Показать их» из предупреждения перед выгрузкой: открыть таблицу с незаполненными обязательными. */
-  onShowMissing: () => void;
-}) {
-  const exp = useExport();
-  const missing = job.summary.missing_required ?? 0;
-  const formats = useMemo(
-    () =>
-      [
-        { f: "source", label: "Как исходный файл", hint: "тот же формат; pdf выгрузим в xlsx" },
-        {
-          f: "application",
-          label: "Для заявки (xlsx)",
-          hint: "код, наименование и характеристики позиции — для закупочной документации",
-        },
-        { f: "xlsx", label: "Excel (xlsx)" },
-        { f: "csv", label: "CSV" },
-        { f: "json", label: "JSON" },
-      ] as { f: ExportFormat; label: string; hint?: string }[],
-    [],
-  );
-  const doExport = (format: ExportFormat) =>
-    exp.mutate(
-      { job, format },
-      {
-        onSuccess: ({ unreviewed, missingRequired }) => {
-          const warn: string[] = [];
-          if (unreviewed)
-            warn.push(`${unreviewed} ${plural(unreviewed, "позиция", "позиции", "позиций")} без проверки человеком`);
-          if (missingRequired)
-            warn.push(
-              `${missingRequired} ${plural(missingRequired, "позиция", "позиции", "позиций")} с незаполненными обязательными характеристиками`,
-            );
-          notifications.show({
-            color: warn.length ? "yellow" : "primary",
-            title: "Файл выгружен",
-            message: warn.length ? `${warn.join("; ")}.` : "Все позиции проверены и заполнены.",
-          });
-        },
-        onError: (e) => notifications.show({ color: "red", message: (e as Error).message }),
-      },
-    );
-  const run = (format: ExportFormat) => {
-    if (!missing) return doExport(format);
-    modals.openConfirmModal({
-      title: "Незаполненные обязательные характеристики",
-      children: (
-        <Text size="sm">
-          У {missing} {plural(missing, "позиции", "позиций", "позиций")} не заполнены обязательные характеристики
-          итогового кода. В выгрузке «для заявки» такие строки помечены «не заполнено».
-        </Text>
-      ),
-      labels: { confirm: "Выгрузить всё равно", cancel: "Показать их" },
-      confirmProps: { color: "primary" },
-      onConfirm: () => doExport(format),
-      onCancel: onShowMissing,
-    });
-  };
-  const button = (
-    <Button
-      {...(emphasis ? { color: "#16201C" } : { variant: "default" })}
-      leftSection={<IconDownload size={16} />}
-      disabled={disabled}
-      loading={exp.isPending}
-    >
-      Выгрузить
-    </Button>
-  );
-  // Отключённая кнопка не ловит наведение, поэтому подсказку вешаем на обёртку.
-  if (disabled)
-    return (
-      <Tooltip label="Выгрузка станет доступна, когда обработка закончится">
-        <span>{button}</span>
-      </Tooltip>
-    );
-  return (
-    <Menu position="bottom-end" withinPortal>
-      <Menu.Target>{button}</Menu.Target>
-      <Menu.Dropdown>
-        {formats.map((x) => (
-          <Menu.Item key={x.f} onClick={() => run(x.f)}>
-            <Text size="sm">{x.label}</Text>
-            {x.hint && (
-              <Text size="xs" c="dimmed">
-                {x.hint}
-              </Text>
-            )}
-          </Menu.Item>
-        ))}
-      </Menu.Dropdown>
-    </Menu>
   );
 }

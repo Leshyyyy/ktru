@@ -175,6 +175,7 @@ export function BatchLink({ batchId, onClick }: { batchId: string; onClick?: (e:
         variant="light"
         radius="sm"
         size="sm"
+        tt="none"
         leftSection={<IconPackages size={12} />}
         onClick={onClick}
         styles={{ root: { cursor: "pointer", flex: "none" } }}

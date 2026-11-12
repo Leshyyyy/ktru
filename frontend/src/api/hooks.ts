@@ -147,6 +147,7 @@ export function useBatch(batchId: string) {
   return useQuery({
     queryKey: keys.batch(batchId),
     queryFn: () => unwrap(api.GET("/batches/{batch_id}", { params: { path: { batch_id: batchId } } })),
+    enabled: !!batchId,
     refetchInterval: (q) => (q.state.data?.status === "processing" ? 1500 : false),
   });
 }
@@ -214,6 +215,7 @@ export function useUpdateCharacteristics() {
     onSuccess: (data, v) => {
       qc.setQueryData(keys.itemCharacteristics(v.itemId), data);
       // Число незаполненных меняется у позиции, в сводке задачи и комплекта — обновляем таблицу и счётчики.
+      qc.invalidateQueries({ queryKey: ["item"] });
       qc.invalidateQueries({ queryKey: ["items"] });
       qc.invalidateQueries({ queryKey: ["job"] });
       qc.invalidateQueries({ queryKey: ["batch"] });

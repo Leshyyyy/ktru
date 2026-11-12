@@ -110,8 +110,8 @@
   gap: 4px;
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--k-lo-ink);
-  background: var(--k-lo-bg);
+  color: var(--k-flag);
+  background: var(--k-flag-bg);
   border-radius: 5px;
   padding: 1px 8px;
   white-space: nowrap;

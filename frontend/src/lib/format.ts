@@ -77,7 +77,7 @@ export const FLAG: Record<ItemFlag, { label: string; short: string; hint: string
 export const CHAR_STATUS: Record<CharStatus, { label: string; bg: string; ink: string }> = {
   match: { label: "Подходит", bg: "var(--k-hi-bg)", ink: "var(--k-hi-ink)" },
   mismatch: { label: "Не подходит", bg: "var(--k-mid-bg)", ink: "var(--k-mid-ink)" },
-  missing: { label: "Не заполнена", bg: "var(--k-lo-bg)", ink: "var(--k-lo-ink)" },
+  missing: { label: "Не заполнена", bg: "var(--k-flag-bg)", ink: "var(--k-flag)" },
   filled: { label: "Заполнена вручную", bg: "var(--k-cor-bg)", ink: "var(--k-cor)" },
 };
 
