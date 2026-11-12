@@ -147,6 +147,7 @@ export function useBatch(batchId: string) {
   return useQuery({
     queryKey: keys.batch(batchId),
     queryFn: () => unwrap(api.GET("/batches/{batch_id}", { params: { path: { batch_id: batchId } } })),
+    enabled: !!batchId,
     refetchInterval: (q) => (q.state.data?.status === "processing" ? 1500 : false),
   });
 }

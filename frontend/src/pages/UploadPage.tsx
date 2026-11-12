@@ -530,33 +530,49 @@ function MultiFileFlow() {
         accept={ACCEPT}
         multiple
         radius="lg"
-        p="lg"
+        p={files.length > 0 ? "sm" : "lg"}
       >
-        <Group justify="center" gap="xl" mih={110} style={{ pointerEvents: "none" }}>
-          <Dropzone.Accept>
-            <IconUpload size={40} stroke={1.4} color="var(--mantine-primary-color-filled)" />
-          </Dropzone.Accept>
-          <Dropzone.Reject>
-            <IconX size={40} stroke={1.4} color="var(--mantine-color-red-6)" />
-          </Dropzone.Reject>
-          <Dropzone.Idle>
-            <IconFiles size={40} stroke={1.4} color="var(--mantine-color-dimmed)" />
-          </Dropzone.Idle>
-          <div>
-            <Text size="lg" fw={600}>
-              Перетащите несколько файлов или нажмите, чтобы выбрать
+        {files.length > 0 ? (
+          <Group justify="center" gap="sm" mih={56} wrap="nowrap" style={{ pointerEvents: "none" }}>
+            <IconFiles size={22} stroke={1.5} color="var(--mantine-color-dimmed)" />
+            <Text size="sm" c="dimmed">
+              + Добавить ещё файлы (до {config?.limits.max_files_per_batch ?? 10})
             </Text>
-            <Text size="sm" c="dimmed" mt={6}>
-              До {config?.limits.max_files_per_batch ?? 10} файлов xlsx, csv или pdf — они обработаются как один
-              комплект
-            </Text>
-          </div>
-        </Group>
+          </Group>
+        ) : (
+          <Group justify="center" gap="xl" mih={110} style={{ pointerEvents: "none" }}>
+            <Dropzone.Accept>
+              <IconUpload size={40} stroke={1.4} color="var(--mantine-primary-color-filled)" />
+            </Dropzone.Accept>
+            <Dropzone.Reject>
+              <IconX size={40} stroke={1.4} color="var(--mantine-color-red-6)" />
+            </Dropzone.Reject>
+            <Dropzone.Idle>
+              <IconFiles size={40} stroke={1.4} color="var(--mantine-color-dimmed)" />
+            </Dropzone.Idle>
+            <div>
+              <Text size="lg" fw={600}>
+                Перетащите несколько файлов или нажмите, чтобы выбрать
+              </Text>
+              <Text size="sm" c="dimmed" mt={6}>
+                До {config?.limits.max_files_per_batch ?? 10} файлов xlsx, csv или pdf — они обработаются как один
+                комплект
+              </Text>
+            </div>
+          </Group>
+        )}
       </Dropzone>
 
       {files.length > 0 && (
         <Card>
           <Stack gap="sm">
+            <TextInput
+              placeholder="Например: Закупка офиса, ноябрь"
+              label="Название комплекта"
+              value={name}
+              onChange={(e) => setName(e.currentTarget.value)}
+              w={420}
+            />
             <Text fw={600}>Загруженные файлы</Text>
             {files.map((p) => {
               const isErr = errFile?.file_id === p.info?.file_id;
@@ -638,7 +654,7 @@ function MultiFileFlow() {
           <Stack gap="md">
             <Text fw={600}>Роли колонок</Text>
             <Text size="sm" c="dimmed">
-              Лист с уверенно определёнными ролями показан свёрнуто; остальные раскрыты для подтверждения.
+              Проверьте роли в раскрытых файлах — остальные определены уверенно
             </Text>
             {ready.map((info) => (
               <MultiSheetEditor
@@ -648,15 +664,6 @@ function MultiFileFlow() {
                 onChange={(sheet, mapping) => setConfig(info.file_id, sheet, mapping)}
               />
             ))}
-            <Group gap="sm">
-              <TextInput
-                placeholder="Название комплекта (необязательно)"
-                value={name}
-                onChange={(e) => setName(e.currentTarget.value)}
-                w={320}
-                label="Название"
-              />
-            </Group>
           </Stack>
         </Card>
       )}
