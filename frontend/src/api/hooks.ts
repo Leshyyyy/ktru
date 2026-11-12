@@ -218,6 +218,8 @@ export function useUpdateCharacteristics() {
       qc.invalidateQueries({ queryKey: ["job"] });
       qc.invalidateQueries({ queryKey: ["batch"] });
       qc.invalidateQueries({ queryKey: ["batches"] });
+      // Группы позиций на странице комплекта опрашиваются отдельной infinite-query по ключу ["batch-items", ...].
+      qc.invalidateQueries({ queryKey: ["batch-items"] });
     },
   });
 }

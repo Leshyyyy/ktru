@@ -219,8 +219,8 @@ function BatchesList() {
                   <Table.Td style={{ overflowWrap: "anywhere" }}>
                     <Group gap={6} align="center">
                       <IconPackages size={18} color="var(--k-primary)" />
-                      <div>
-                        <Text fw={500} lineClamp={1}>
+                      <div style={{ minWidth: 0 }}>
+                        <Text fw={500} lineClamp={2} style={{ overflowWrap: "anywhere" }}>
                           {batchTitle(b)}
                         </Text>
                         <Text size="xs" c="dimmed">
