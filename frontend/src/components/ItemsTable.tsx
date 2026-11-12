@@ -81,6 +81,8 @@ export function ItemsTable({ items, loading, fetching, selectedId, compact, onOp
             // красную позицию подтверждают из карточки, сравнив варианты.
             const unsure = (it.predictions[0]?.confidence ?? 0) < t.yellow;
             const canConfirm = (it.status === "processed" || it.status === "needs_review") && !unsure;
+            // Если позиция уже отмечена «не заполнено N», флаг required_missing убираем — одно предупреждение.
+            const flags = it.missing_required_count ? it.flags?.filter((f) => f !== "required_missing") : it.flags;
             return (
               <Table.Tr
                 key={it.item_id}
@@ -164,7 +166,7 @@ export function ItemsTable({ items, loading, fetching, selectedId, compact, onOp
                     </Table.Td>
                     <Table.Td>
                       <ItemStatusBadge status={it.status} />
-                      <FlagChips flags={it.flags} />
+                      <FlagChips flags={flags} />
                       {it.missing_required_count ? (
                         <Box mt={4}>
                           <MissingRequiredBadge count={it.missing_required_count} />

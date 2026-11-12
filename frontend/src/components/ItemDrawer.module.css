@@ -136,10 +136,6 @@
     background: var(--k-hi-bg);
     color: var(--k-hi-ink);
   }
-  &[data-kind="n"] {
-    background: var(--k-lo-bg);
-    color: var(--k-lo-ink);
-  }
 }
 
 .why {
@@ -198,10 +194,31 @@
 
 /* Блок обязательных характеристик итогового кода. */
 .charRow {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--k-line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--k-surface);
+}
+
+/* строка-таблица: название | поле/значение | статус */
+.charRowGrid {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+}
+
+.charName {
+  font-weight: 600;
+  font-size: 13.5px;
+  line-height: 1.3;
+  min-width: 0;
+}
+
+.charExp {
+  font-size: 11.5px;
+  color: var(--k-muted);
+  grid-column: 1 / -1;
 }
 
 .charStatus {
@@ -215,11 +232,18 @@
 }
 
 .charReq {
-  color: var(--k-lo-ink);
+  color: var(--k-flag);
   font-weight: 600;
 }
 
 .missCount {
-  color: var(--k-lo-ink);
+  color: var(--k-flag);
   font-weight: 600;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.charEdit {
+  min-width: 0;
 }

@@ -26,7 +26,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useDebouncedValue, useHotkeys } from "@mantine/hooks";
-import { IconArrowDown, IconArrowUp, IconCheck, IconMinus, IconSearch, IconX } from "@tabler/icons-react";
+import { IconArrowDown, IconArrowUp, IconCheck, IconMinus, IconSearch } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import {
   useCatalogItem,
@@ -144,6 +144,16 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
                 </Text>
               </Group>
               <Group gap={6} wrap="nowrap">
+                {!!item.missing_required_count && (
+                  <UnstyledButton
+                    className={classes.missCount}
+                    onClick={() =>
+                      bodyRef.current?.querySelector("[data-char-block]")?.scrollIntoView({ block: "nearest" })
+                    }
+                  >
+                    не заполнено: {item.missing_required_count}
+                  </UnstyledButton>
+                )}
                 <Button variant="default" size="compact-sm" onClick={onPrev} disabled={!onPrev} aria-label="Предыдущая">
                   <IconArrowUp size={14} />
                   <Kbd size="sm" ml={4}>
@@ -163,7 +173,9 @@ export function ItemDrawer({ itemId, fromList, job, onClose, onPrev, onNext, onA
               {item.raw_text}
             </Text>
             <Group gap={6}>
-              <FlagChips flags={item.flags} />
+              <FlagChips
+                flags={item.missing_required_count ? item.flags?.filter((f) => f !== "required_missing") : item.flags}
+              />
               {item.group_id && (
                 <Box mt={4}>
                   <GroupBadge size={item.group_size ?? 1} onClick={() => onGroup(item.group_id!)} />
@@ -361,7 +373,7 @@ function CharacteristicsBlock({ item }: { item: Item }) {
   const counters = data && !stale ? requiredCounters(data.characteristics) : null;
 
   return (
-    <div>
+    <div data-char-block>
       <div className={classes.sectT}>
         <span>Обязательные характеристики</span>
         {counters && counters.total > 0 && (
@@ -425,8 +437,8 @@ function CharRow({
   const st = CHAR_STATUS[ch.status];
   return (
     <div className={classes.charRow}>
-      <Group justify="space-between" align="center" gap={8} wrap="nowrap">
-        <Text component="span" size="sm" fw={600} lh={1.35}>
+      <div className={classes.charRowGrid}>
+        <Text component="span" className={classes.charName}>
           {ch.name}
           {ch.required && (
             <Text component="span" className={classes.charReq} title="Обязательная характеристика">
@@ -434,22 +446,20 @@ function CharRow({
             </Text>
           )}
         </Text>
+        {/* Поле/значение: у необязательной и заполненной — текст, иначе поле ввода. */}
+        <div className={classes.charEdit}>
+          <CharFill ch={ch} disabled={!canEdit} onSave={onSave} />
+        </div>
         <span className={classes.charStatus} style={{ background: st.bg, color: st.ink }}>
           {st.label}
         </span>
-      </Group>
-      <Text size="xs" c="dimmed" mt={6}>
-        Допустимо по КТРУ: {ch.expected ?? "—"}
-      </Text>
-      {ch.found != null && (
-        <Text size="xs" c="dimmed">
-          Найдено в тексте: {ch.found}
-        </Text>
-      )}
-      {/* Поле у всех строк: необязательную характеристику тоже можно дозаполнить и убрать введённое. */}
-      <Box mt={8}>
-        <CharFill ch={ch} disabled={!canEdit} onSave={onSave} />
-      </Box>
+        {ch.found != null && (
+          <Text size="xs" c="dimmed">
+            Найдено в тексте: {ch.found}
+          </Text>
+        )}
+      </div>
+      {ch.expected && <Text className={classes.charExp}>Допустимо по КТРУ: {ch.expected}</Text>}
     </div>
   );
 }
@@ -539,9 +549,9 @@ function Variant({ p, picked, onPick }: { p: Prediction; picked: boolean; onPick
 }
 
 function CharChip({ m }: { m: CharacteristicMatch }) {
-  const bad = m.status === "mismatch" || (m.status === "missing" && m.required);
-  const kind = m.status === "match" ? "y" : bad ? "n" : "none";
-  const icon = m.status === "match" ? <IconCheck size={11} /> : bad ? <IconX size={11} /> : <IconMinus size={11} />;
+  // Чип в стиле макета «Вариант КТРУ»: ✓ зелёный (match) / – серый (иначе), без красных крестиков.
+  const kind = m.status === "match" ? "y" : "none";
+  const icon = m.status === "match" ? <IconCheck size={11} /> : <IconMinus size={11} />;
   return (
     <span className={classes.cm} data-kind={kind} title={m.expected ? `Допустимо по КТРУ: ${m.expected}` : undefined}>
       {icon} {m.name}: {m.found ?? "не указан"}
