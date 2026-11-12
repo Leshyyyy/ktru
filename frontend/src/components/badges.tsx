@@ -1,8 +1,8 @@
 import { Group, Text, Tooltip } from "@mantine/core";
 import { IconAlertTriangle, IconCheck } from "@tabler/icons-react";
-import type { ItemFlag, ItemStatus, JobStatus } from "../api/types";
+import type { BatchStatus, ItemFlag, ItemStatus, JobStatus } from "../api/types";
 import { useConfig } from "../api/hooks";
-import { BAND, bandOf, FLAG, ITEM_STATUS, JOB_STATUS, pct, plural } from "../lib/format";
+import { BAND, BATCH_STATUS, bandOf, FLAG, ITEM_STATUS, JOB_STATUS, pct, plural } from "../lib/format";
 import classes from "./badges.module.css";
 
 const DEFAULT_T = { green: 0.85, yellow: 0.5 };
@@ -59,6 +59,23 @@ export function JobStatusBadge({ status }: { status: JobStatus }) {
   return (
     <span className={classes.st} data-tone={JOB_TONE[status]}>
       {JOB_STATUS[status].label}
+    </span>
+  );
+}
+
+const BATCH_TONE: Record<BatchStatus, "neutral" | "busy" | "ok" | "warn" | "bad"> = {
+  processing: "busy",
+  done: "ok",
+  done_with_errors: "warn",
+  failed: "bad",
+  cancelled: "neutral",
+};
+
+/** Статус комплекта — та же плашка, что у задачи. */
+export function BatchStatusBadge({ status }: { status: BatchStatus }) {
+  return (
+    <span className={classes.st} data-tone={BATCH_TONE[status]}>
+      {BATCH_STATUS[status].label}
     </span>
   );
 }

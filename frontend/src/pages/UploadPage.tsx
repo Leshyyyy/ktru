@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -16,8 +17,10 @@ import {
   Tabs,
   Text,
   Textarea,
+  TextInput,
   ThemeIcon,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import { Dropzone } from "@mantine/dropzone";
 import { useDisclosure } from "@mantine/hooks";
@@ -27,6 +30,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconFileSpreadsheet,
+  IconFiles,
   IconInfoCircle,
   IconPlayerPlay,
   IconSparkles,
@@ -36,8 +40,8 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { ApiRequestError } from "../api/client";
-import { useClassify, useConfig, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
-import type { ClassifyResult, ColumnRole, FileInfo, Sheet } from "../api/types";
+import { useClassify, useConfig, useCreateBatch, useCreateJob, useHealth, useUploadFile } from "../api/hooks";
+import type { ClassifyResult, ColumnRole, FileInfo, JobCreate, Sheet } from "../api/types";
 import { ConfidenceBadge, KtruCode } from "../components/badges";
 import { fileSize, pct, plural, ROLE } from "../lib/format";
 import { SAMPLE_HEADERS, SAMPLE_ROWS } from "../mock/sample";
@@ -63,12 +67,18 @@ export function UploadPage() {
           <Tabs.Tab value="file" leftSection={<IconFileSpreadsheet size={16} />}>
             Файл спецификации
           </Tabs.Tab>
+          <Tabs.Tab value="batch" leftSection={<IconFiles size={16} />}>
+            Комплект файлов
+          </Tabs.Tab>
           <Tabs.Tab value="quick" leftSection={<IconSparkles size={16} />}>
             Быстрая проверка строк
           </Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="file">
           <FileFlow />
+        </Tabs.Panel>
+        <Tabs.Panel value="batch">
+          <MultiFileFlow />
         </Tabs.Panel>
         <Tabs.Panel value="quick">
           <QuickCheck />
@@ -384,6 +394,413 @@ function MappingStep({ info, onReset }: { info: FileInfo; onReset: () => void })
         </Card>
       </Box>
     </Stack>
+  );
+}
+
+// ---------------------------------------------------------------- комплект файлов
+
+type PendingFile = { id: string; file: File; state: "uploading" | "ok" | "error"; info?: FileInfo; message?: string };
+
+/** Загрузка нескольких файлов сразу и запуск их одной задачей-комплектом (POST /batches). */
+function MultiFileFlow() {
+  const upload = useUploadFile();
+  const createBatch = useCreateBatch();
+  const config = useConfig().data;
+  const navigate = useNavigate();
+  const notReady = useHealth().data?.ready === false;
+  const [name, setName] = useState("");
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  // Пер-файловая конфигурация: file_id → выбранный лист и сопоставление колонок.
+  const [configs, setConfigs] = useState<Record<string, { sheet: string; mapping: Mapping }>>({});
+  // file_id файла, который не прошёл проверку в POST /batches — храним id, а не индекс:
+  // после удаления файла из списка индекс сбился бы, а id остаётся корректным.
+  const [batchErrorFileId, setBatchErrorFileId] = useState<string | null>(null);
+
+  const setConfig = (fileId: string, sheet: string, mapping: Mapping) =>
+    setConfigs((prev) => ({ ...prev, [fileId]: { sheet, mapping } }));
+
+  const addFiles = (list: File[]) => {
+    const max = config?.limits.max_files_per_batch ?? 10;
+    const remaining = max - files.length;
+    if (remaining <= 0) {
+      notifications.show({
+        color: "red",
+        message: `Не больше ${max} ${plural(max, "файла", "файлов", "файлов")} в одном комплекте.`,
+      });
+      return;
+    }
+    const batch = list.slice(0, remaining).map((file) => {
+      const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // mutateAsync на каждый файл: у useMutation() колбэки из mutate() срабатывают только у последнего
+      // вызова, поэтому запускаем файлы отдельными промисами.
+      upload
+        .mutateAsync(file)
+        .then((info) => {
+          setFiles((prev) => prev.map((p) => (p.id === id ? { ...p, state: "ok", info, message: undefined } : p)));
+          // Сразу закладываем начальное сопоставление колонок — чтобы уверенные свёрнутые листы не блокировали запуск.
+          const first = info.sheets[0];
+          setConfigs((prev) => ({
+            ...prev,
+            [info.file_id]: { sheet: first?.name ?? "", mapping: initialMapping(first, info) },
+          }));
+        })
+        .catch((e) =>
+          setFiles((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, state: "error", message: (e as Error).message } : p)),
+          ),
+        );
+      return { id, file, state: "uploading" as const };
+    });
+    setFiles((prev) => [...prev, ...batch]);
+  };
+
+  const ready = files.filter((f) => f.state === "ok" && f.info).map((f) => f.info!);
+  const hasError = files.some((f) => f.state === "error");
+  const uploading = files.some((f) => f.state === "uploading");
+  const allConfigured = ready.length > 0 && ready.every((info) => configs[info.file_id]);
+  // Каждый файл должен иметь валидное сопоставление (ровно одна колонка наименования).
+  const invalidFile = ready.find((info) => {
+    const c = configs[info.file_id];
+    if (!c) return true;
+    return validate(c.mapping) !== null;
+  });
+  // Файл с ошибкой POST /batches — по file_id (устойчиво к перестановке списка).
+  const errFile = batchErrorFileId ? ready.find((info) => info.file_id === batchErrorFileId) : undefined;
+
+  const removeFile = (id: string) => {
+    const p = files.find((f) => f.id === id);
+    setFiles((prev) => prev.filter((f) => f.id !== id));
+    if (p?.info) {
+      if (p.info.file_id === batchErrorFileId) setBatchErrorFileId(null);
+      setConfigs((prev) => {
+        const next = { ...prev };
+        delete next[p.info!.file_id];
+        return next;
+      });
+    }
+  };
+
+  const start = () => {
+    if (ready.length === 0 || hasError || uploading || !allConfigured || invalidFile) return;
+    const jobs = ready.map((info) => {
+      const sheet = info.sheets.find((s) => s.name === configs[info.file_id]!.sheet) ?? info.sheets[0];
+      const mapping = configs[info.file_id]!.mapping;
+      return {
+        file_id: info.file_id,
+        sheet: sheet.name,
+        header_row: sheet.header_row,
+        column_mapping: Object.entries(mapping)
+          .filter(([, role]) => role !== "ignore")
+          .map(([index, role]) => ({ index: Number(index), role })),
+        options: { use_llm: !!config?.mode.llm_enabled, use_feedback: true },
+      } as JobCreate;
+    });
+    const body = { name: name.trim() || null, jobs };
+    createBatch.mutate(body, {
+      onSuccess: (batch) => navigate(`/batches/${batch.batch_id}`),
+      onError: (e) => {
+        // POST /batches отвечает 422 с details.job_index, когда не прошла одна из задач — подсветить этот файл.
+        const idx =
+          e instanceof ApiRequestError && e.details && typeof e.details.job_index === "number"
+            ? e.details.job_index
+            : null;
+        // Запоминаем конкретный file_id на момент запроса, чтобы после удаления файла подсветка не съехала.
+        setBatchErrorFileId(idx != null && ready[idx] ? ready[idx]!.file_id : null);
+        notifications.show({ color: "red", title: "Не удалось запустить обработку", message: (e as Error).message });
+      },
+    });
+  };
+
+  return (
+    <Stack>
+      <Dropzone
+        onDrop={addFiles}
+        onReject={(rej) => {
+          const code = rej[0]?.errors[0]?.code;
+          notifications.show({
+            color: "red",
+            title: "Файл не подходит",
+            message:
+              code === "file-too-large"
+                ? "Файл больше 50 МБ. Разбейте его на части."
+                : "Поддерживаются файлы xlsx, csv и pdf.",
+          });
+        }}
+        maxSize={50 * 1024 * 1024}
+        accept={ACCEPT}
+        multiple
+        radius="lg"
+        p="lg"
+      >
+        <Group justify="center" gap="xl" mih={110} style={{ pointerEvents: "none" }}>
+          <Dropzone.Accept>
+            <IconUpload size={40} stroke={1.4} color="var(--mantine-primary-color-filled)" />
+          </Dropzone.Accept>
+          <Dropzone.Reject>
+            <IconX size={40} stroke={1.4} color="var(--mantine-color-red-6)" />
+          </Dropzone.Reject>
+          <Dropzone.Idle>
+            <IconFiles size={40} stroke={1.4} color="var(--mantine-color-dimmed)" />
+          </Dropzone.Idle>
+          <div>
+            <Text size="lg" fw={600}>
+              Перетащите несколько файлов или нажмите, чтобы выбрать
+            </Text>
+            <Text size="sm" c="dimmed" mt={6}>
+              До {config?.limits.max_files_per_batch ?? 10} файлов xlsx, csv или pdf — они обработаются как один
+              комплект
+            </Text>
+          </div>
+        </Group>
+      </Dropzone>
+
+      {files.length > 0 && (
+        <Card>
+          <Stack gap="sm">
+            <Text fw={600}>Загруженные файлы</Text>
+            {files.map((p) => {
+              const isErr = errFile?.file_id === p.info?.file_id;
+              return (
+                <Group
+                  key={p.id}
+                  justify="space-between"
+                  wrap="nowrap"
+                  gap="sm"
+                  data-batch-err={isErr || undefined}
+                  style={
+                    isErr
+                      ? {
+                          padding: "6px 10px",
+                          border: "1px solid var(--k-lo)",
+                          borderRadius: 8,
+                          background: "var(--k-lo-bg)",
+                        }
+                      : undefined
+                  }
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <IconFileSpreadsheet
+                      size={16}
+                      className={p.state === "error" ? "k-ico-err" : p.state === "ok" ? "k-ico-ok" : "k-ico-dim"}
+                    />
+                    <Text size="sm" lineClamp={1}>
+                      {p.file.name}
+                    </Text>
+                    {p.state === "ok" && p.info && (
+                      <Text size="xs" c="dimmed">
+                        {p.info.sheets.length} {plural(p.info.sheets.length, "лист", "листа", "листов")}
+                      </Text>
+                    )}
+                  </Group>
+                  <Group gap="sm" wrap="nowrap" align="center">
+                    {isErr && (
+                      <Text size="xs" c="var(--k-lo-ink)">
+                        проверьте роли колонок
+                      </Text>
+                    )}
+                    <Text size="xs" c={p.state === "error" ? "var(--k-lo-ink)" : "dimmed"} className="tabular">
+                      {p.state === "uploading" ? "загружается…" : p.state === "ok" ? "готов" : p.message}
+                    </Text>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="sm"
+                      onClick={() => removeFile(p.id)}
+                      disabled={p.state === "uploading"}
+                      aria-label={`Убрать файл ${p.file.name}`}
+                    >
+                      <IconX size={14} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              );
+            })}
+            <Group justify="flex-end">
+              <Button
+                variant="subtle"
+                color="gray"
+                onClick={() => {
+                  setFiles([]);
+                  setConfigs({});
+                  setBatchErrorFileId(null);
+                }}
+                disabled={uploading}
+              >
+                Очистить список
+              </Button>
+            </Group>
+          </Stack>
+        </Card>
+      )}
+
+      {ready.length > 0 && (
+        <Card>
+          <Stack gap="md">
+            <Text fw={600}>Роли колонок</Text>
+            <Text size="sm" c="dimmed">
+              Лист с уверенно определёнными ролями показан свёрнуто; остальные раскрыты для подтверждения.
+            </Text>
+            {ready.map((info) => (
+              <MultiSheetEditor
+                key={info.file_id}
+                info={info}
+                value={configs[info.file_id]}
+                onChange={(sheet, mapping) => setConfig(info.file_id, sheet, mapping)}
+              />
+            ))}
+            <Group gap="sm">
+              <TextInput
+                placeholder="Название комплекта (необязательно)"
+                value={name}
+                onChange={(e) => setName(e.currentTarget.value)}
+                w={320}
+                label="Название"
+              />
+            </Group>
+          </Stack>
+        </Card>
+      )}
+
+      {ready.length > 0 && (
+        <Box className="k-sticky-actions">
+          <Card>
+            <Group justify="space-between" wrap="wrap" gap="md">
+              <Text size="sm" c="dimmed">
+                {hasError
+                  ? "Есть файлы, которые не загрузились."
+                  : uploading
+                    ? "Загружается…"
+                    : invalidFile
+                      ? "Проверьте роли колонок в помеченных файлах."
+                      : `${ready.length} ${plural(ready.length, "файл готов", "файла готовы", "файлов готово")} к запуску`}
+              </Text>
+              <Button
+                size="md"
+                leftSection={<IconPlayerPlay size={18} />}
+                onClick={start}
+                disabled={!allConfigured || !!invalidFile || hasError || uploading || notReady}
+                loading={createBatch.isPending}
+              >
+                Запустить обработку комплекта
+              </Button>
+            </Group>
+          </Card>
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
+/** Как в MappingStep: сопоставление ролей колонок листа файла. Контролируемое — состояние в MultiFileFlow. */
+function MultiSheetEditor({
+  info,
+  value,
+  onChange,
+}: {
+  info: FileInfo;
+  value?: { sheet: string; mapping: Mapping };
+  onChange: (sheet: string, mapping: Mapping) => void;
+}) {
+  const sheetName = value?.sheet ?? info.sheets[0]?.name ?? "";
+  const sheet = info.sheets.find((s) => s.name === sheetName) ?? info.sheets[0];
+  const mapping = value?.mapping ?? {};
+  const roleOptions = (Object.keys(ROLE) as ColumnRole[]).map((r) => ({ value: r, label: ROLE[r] }));
+  const confident = sheet.mapping_confident;
+  const [open, setOpen] = useState(!confident);
+  const error = validate(mapping);
+
+  const setMappingFromSheet = (name: string | null) => {
+    const s = info.sheets.find((x) => x.name === name);
+    if (!s) return;
+    onChange(s.name, initialMapping(s, info));
+  };
+
+  return (
+    <Card p="md">
+      <UnstyledButton
+        w="100%"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        style={{ display: "flex", alignItems: "center", gap: 8 }}
+      >
+        <IconChevronDown size={15} style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)", flex: "none" }} />
+        <IconFileSpreadsheet size={16} className="k-ico-dim" />
+        <Text fw={500} lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
+          {info.filename}
+        </Text>
+        {confident ? (
+          <Text size="xs" c="var(--k-hi-ink)">
+            роли определены ✓
+          </Text>
+        ) : (
+          <Text size="xs" c="var(--k-mid-ink)">
+            проверьте роли
+          </Text>
+        )}
+      </UnstyledButton>
+      {open && (
+        <Stack gap="sm" mt="md">
+          {info.sheets.length > 1 && (
+            <Select
+              label="Лист"
+              data={info.sheets.map((s) => s.name)}
+              value={sheet.name}
+              onChange={setMappingFromSheet}
+              allowDeselect={false}
+              w={240}
+            />
+          )}
+          <ScrollArea type="auto">
+            <Table striped withColumnBorders verticalSpacing={6} miw={sheet.columns.length * 170}>
+              <Table.Thead>
+                <Table.Tr>
+                  {sheet.columns.map((c) => (
+                    <Table.Th
+                      key={c.index}
+                      miw={160}
+                      bg={mapping[c.index] === "name" ? "var(--mantine-primary-color-light)" : undefined}
+                    >
+                      <Stack gap={6} py={4}>
+                        <Select
+                          size="xs"
+                          data={roleOptions}
+                          value={mapping[c.index] ?? "ignore"}
+                          onChange={(v) => v && onChange(sheet.name, { ...mapping, [c.index]: v as ColumnRole })}
+                          allowDeselect={false}
+                          aria-label={`Роль колонки «${c.header}»`}
+                          comboboxProps={{ withinPortal: true }}
+                        />
+                        <Text size="xs" fw={600} c={mapping[c.index] === "ignore" ? "dimmed" : undefined} lineClamp={2}>
+                          {c.header}
+                        </Text>
+                      </Stack>
+                    </Table.Th>
+                  ))}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {sheet.preview.map((row, r) => (
+                  <Table.Tr key={r}>
+                    {sheet.columns.map((c) => (
+                      <Table.Td key={c.index} c={mapping[c.index] === "ignore" ? "dimmed" : undefined}>
+                        <Text size="sm" lineClamp={2}>
+                          {row[c.index]}
+                        </Text>
+                      </Table.Td>
+                    ))}
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+          {error && (
+            <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
+              {error}
+            </Alert>
+          )}
+        </Stack>
+      )}
+    </Card>
   );
 }
 

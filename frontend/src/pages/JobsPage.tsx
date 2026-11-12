@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Badge,
   Box,
   Button,
   Card,
@@ -13,27 +14,28 @@ import {
   Skeleton,
   Stack,
   Table,
+  Tabs,
   Text,
   Title,
+  Tooltip,
 } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconDots, IconFileUpload, IconListCheck, IconPlayerStop, IconTrash } from "@tabler/icons-react";
+import { IconDots, IconFileUpload, IconListCheck, IconPackages, IconPlayerStop, IconTrash } from "@tabler/icons-react";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { isActive, useCancelJob, useDeleteJob, useItems, useJobs } from "../api/hooks";
-import type { Job } from "../api/types";
-import { JobStatusBadge } from "../components/badges";
-import { dateTime, plural } from "../lib/format";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { isActive, useBatches, useCancelJob, useDeleteJob, useItems, useJobs } from "../api/hooks";
+import type { Batch, Job } from "../api/types";
+import { BatchStatusBadge, JobStatusBadge } from "../components/badges";
+import { dateTime, plural, pct } from "../lib/format";
+import { useThresholds } from "../components/badges";
 
 export function JobsPage() {
-  const [page, setPage] = useState(1);
-  const { data, isLoading, isError, error } = useJobs(page);
-  const navigate = useNavigate();
-
+  const [sp, setSp] = useSearchParams();
+  const tab = sp.get("tab") === "batches" ? "batches" : "jobs";
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
+      <Group justify="space-between" align="flex-start">
         <div>
           <Title order={2}>Задачи</Title>
           <Text c="dimmed" mt={4}>
@@ -45,8 +47,42 @@ export function JobsPage() {
         </Button>
       </Group>
 
-      {isError && <Alert color="red">{(error as Error).message}</Alert>}
+      <Tabs
+        value={tab}
+        onChange={(v) => {
+          const n = new URLSearchParams(sp);
+          if (v === "batches") n.set("tab", "batches");
+          else n.delete("tab");
+          setSp(n, { replace: true });
+        }}
+      >
+        <Tabs.List mb="md">
+          <Tabs.Tab value="jobs" leftSection={<IconListCheck size={16} />}>
+            Задачи
+          </Tabs.Tab>
+          <Tabs.Tab value="batches" leftSection={<IconPackages size={16} />}>
+            Комплекты
+          </Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="jobs">
+          <JobsList />
+        </Tabs.Panel>
+        <Tabs.Panel value="batches">
+          <BatchesList />
+        </Tabs.Panel>
+      </Tabs>
+    </Stack>
+  );
+}
 
+function JobsList() {
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isError, error } = useJobs(page);
+  const navigate = useNavigate();
+
+  return (
+    <Stack gap="lg">
+      {isError && <Alert color="red">{(error as Error).message}</Alert>}
       <Card p={0}>
         <ScrollArea type="auto">
           <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="lg" miw={900}>
@@ -72,7 +108,12 @@ export function JobsPage() {
               {data?.items.map((job) => (
                 <Table.Tr key={job.job_id} className="row-clickable" onClick={() => navigate(`/jobs/${job.job_id}`)}>
                   <Table.Td style={{ overflowWrap: "anywhere" }}>
-                    <Text fw={500}>{job.filename}</Text>
+                    <Group gap={6} wrap="nowrap" align="center">
+                      <Text fw={500} lineClamp={1}>
+                        {job.filename}
+                      </Text>
+                      {job.batch_id && <BatchLink batchId={job.batch_id} onClick={(e) => e.stopPropagation()} />}
+                    </Group>
                     <Text size="xs" c="dimmed">
                       {job.total_items
                         ? `${job.total_items} ${plural(job.total_items, "позиция", "позиции", "позиций")}`
@@ -124,10 +165,171 @@ export function JobsPage() {
   );
 }
 
+/** Бейдж «комплект» у задачи из комплекта — ведёт на страницу комплекта. */
+export function BatchLink({ batchId, onClick }: { batchId: string; onClick?: (e: React.MouseEvent) => void }) {
+  return (
+    <Tooltip label="Задача входит в комплект. Открыть комплект">
+      <Badge
+        component={Link}
+        to={`/batches/${batchId}`}
+        variant="light"
+        radius="sm"
+        size="sm"
+        leftSection={<IconPackages size={12} />}
+        onClick={onClick}
+        styles={{ root: { cursor: "pointer", flex: "none" } }}
+      >
+        комплект
+      </Badge>
+    </Tooltip>
+  );
+}
+
+function BatchesList() {
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isError, error } = useBatches(page);
+  const navigate = useNavigate();
+
+  return (
+    <Stack gap="lg">
+      {isError && <Alert color="red">{(error as Error).message}</Alert>}
+      <Card p={0}>
+        <ScrollArea type="auto">
+          <Table highlightOnHover verticalSpacing="sm" horizontalSpacing="lg" miw={900}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Комплект</Table.Th>
+                <Table.Th w={160}>Статус</Table.Th>
+                <Table.Th w={320}>Прогресс</Table.Th>
+                <Table.Th w={220}>Сводка</Table.Th>
+                <Table.Th w={150}>Создан</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {isLoading &&
+                Array.from({ length: 3 }).map((_, i) => (
+                  <Table.Tr key={i}>
+                    <Table.Td colSpan={5}>
+                      <Skeleton h={22} />
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              {data?.items.map((b) => (
+                <Table.Tr key={b.batch_id} className="row-clickable" onClick={() => navigate(`/batches/${b.batch_id}`)}>
+                  <Table.Td style={{ overflowWrap: "anywhere" }}>
+                    <Group gap={6} align="center">
+                      <IconPackages size={18} color="var(--k-primary)" />
+                      <div style={{ minWidth: 0 }}>
+                        <Text fw={500} lineClamp={2} style={{ overflowWrap: "anywhere" }}>
+                          {batchTitle(b)}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {b.jobs.length} {plural(b.jobs.length, "файл", "файла", "файлов")} ·{" "}
+                          {b.total_items
+                            ? `${b.total_items} ${plural(b.total_items, "позиция", "позиции", "позиций")}`
+                            : "позиции считаются"}
+                        </Text>
+                      </div>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <BatchStatusBadge status={b.status} />
+                  </Table.Td>
+                  <Table.Td>
+                    <BatchProgress batch={b} />
+                  </Table.Td>
+                  <Table.Td>
+                    <BatchZones summary={b.summary} />
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm" className="tabular">
+                      {dateTime(b.created_at)}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+        {data && data.items.length === 0 && (
+          <Center py={60}>
+            <Stack align="center" gap="xs">
+              <Text fw={500}>Комплектов пока нет</Text>
+              <Text size="sm" c="dimmed">
+                Загрузите несколько спецификаций сразу, и они появятся здесь как комплект.
+              </Text>
+              <Button component={Link} to="/" variant="light" mt="xs">
+                Загрузить файлы
+              </Button>
+            </Stack>
+          </Center>
+        )}
+      </Card>
+      {data && data.total > data.page_size && (
+        <Group justify="center">
+          <Pagination value={page} onChange={setPage} total={Math.ceil(data.total / data.page_size)} />
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
+export const batchTitle = (b: { name?: string | null; jobs: Job[] }) =>
+  b.name?.trim() || (b.jobs.length ? b.jobs.map((j) => j.filename).join(", ") : "Комплект");
+
+function BatchProgress({ batch }: { batch: Batch }) {
+  const done = batch.processed_items + batch.failed_items;
+  return (
+    <Stack gap={4}>
+      <Progress
+        value={batch.progress * 100}
+        size="sm"
+        animated={batch.status === "processing"}
+        color={batch.status === "cancelled" ? "gray" : batch.failed_items ? "orange" : undefined}
+      />
+      <Text size="xs" c="dimmed" className="tabular">
+        {batch.total_items ? `${done} из ${batch.total_items}` : "позиции считаются"}
+      </Text>
+    </Stack>
+  );
+}
+
+function BatchZones({ summary }: { summary: Batch["summary"] }) {
+  const t = useThresholds();
+  const zones: { n: number; color: string; label: string; hint: string }[] = [
+    { n: summary.green ?? 0, color: "var(--k-hi)", label: "зелёные", hint: `уверенность от ${pct(t.green)}` },
+    {
+      n: summary.yellow ?? 0,
+      color: "var(--k-mid)",
+      label: "жёлтые",
+      hint: `уверенность ${pct(t.yellow)}–${pct(t.green)}`,
+    },
+    { n: summary.red ?? 0, color: "var(--k-lo)", label: "красные", hint: `уверенность ниже ${pct(t.yellow)}` },
+  ];
+  return (
+    <Group gap={8} wrap="wrap">
+      {zones.map((z) => (
+        <Tooltip key={z.label} label={z.hint}>
+          <Group gap={4} wrap="nowrap">
+            <Box w={8} h={8} style={{ borderRadius: 2, background: z.color, flex: "none" }} aria-hidden />
+            <Text size="xs" className="tabular">
+              {z.n}
+            </Text>
+          </Group>
+        </Tooltip>
+      ))}
+      {(summary.missing_required ?? 0) > 0 && (
+        <Text size="xs" c="var(--k-lo-ink)" className="tabular">
+          обяз. не заполнено: {summary.missing_required}
+        </Text>
+      )}
+    </Group>
+  );
+}
+
 function JobProgress({ job }: { job: Job }) {
   const done = job.processed_items + job.failed_items;
   const s = job.summary;
-  // Полные слова вместо «12 зел. / 33 жёлт.»: цвет точки дублирует подпись, а не заменяет её.
   const zones = [
     { n: s.green ?? 0, color: "var(--k-hi)", word: ["зелёная", "зелёные", "зелёных"] as const },
     { n: s.yellow ?? 0, color: "var(--k-mid)", word: ["жёлтая", "жёлтые", "жёлтых"] as const },

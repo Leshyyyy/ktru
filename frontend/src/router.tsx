@@ -3,6 +3,7 @@ import { Layout } from "./components/Layout";
 import { UploadPage } from "./pages/UploadPage";
 import { JobsPage } from "./pages/JobsPage";
 import { JobPage } from "./pages/JobPage";
+import { BatchPage } from "./pages/BatchPage";
 import { QualityPage } from "./pages/QualityPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
@@ -13,6 +14,7 @@ const routes: RouteObject[] = [
       { path: "/", element: <UploadPage /> },
       { path: "/jobs", element: <JobsPage /> },
       { path: "/jobs/:jobId", element: <JobPage /> },
+      { path: "/batches/:batchId", element: <BatchPage /> },
       { path: "/quality", element: <QualityPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

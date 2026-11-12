@@ -7,6 +7,8 @@
  * со скоростью RATE штук в секунду, так что прогресс, частичные результаты и отмену можно посмотреть вживую.
  */
 import type {
+  Batch,
+  BatchStatus,
   ColumnMappingEntry,
   FileInfo,
   FinalAnswer,
@@ -27,7 +29,13 @@ const RATE = 12; // позиций в секунду
 const QUEUED_MS = 600;
 const PARSING_MS = 900;
 const THRESHOLDS = { green: 0.85, yellow: 0.5 };
-const LIMITS = { max_file_mb: 50, max_rows: 5000, max_items_per_job: 1000, classify_max_items: 20 };
+const LIMITS = {
+  max_file_mb: 50,
+  max_rows: 5000,
+  max_items_per_job: 1000,
+  classify_max_items: 20,
+  max_files_per_batch: 10,
+};
 
 // ---------------------------------------------------------------- хранилище
 
@@ -61,11 +69,20 @@ type JobRec = {
   cancelledAt: number | null;
   items: ItemRec[];
   effective_mode: "normal" | "degraded";
+  /** Комплект, в который входит задача; null — создана отдельно. */
+  batchId: string | null;
+};
+type BatchRec = {
+  batch_id: string;
+  name: string | null;
+  jobIds: string[];
+  createdAt: number;
 };
 
 const files = new Map<string, FileRec>();
 const jobs = new Map<string, JobRec>();
 const items = new Map<string, ItemRec>();
+const batches = new Map<string, BatchRec>();
 const layouts = new Map<string, LayoutHint>();
 const shaToJob = new Map<string, string>();
 
@@ -238,6 +255,7 @@ function jobView(job: JobRec): Job {
   return {
     job_id: job.job_id,
     status,
+    batch_id: job.batchId,
     file_id: job.file_id,
     filename: job.filename,
     total_items: total,
@@ -267,6 +285,7 @@ function createJob(opts: {
   mapping: ColumnMappingEntry[];
   createdAt: number;
   degraded?: boolean;
+  batchId?: string | null;
 }): JobRec {
   const job: JobRec = {
     job_id: uuid(),
@@ -277,6 +296,7 @@ function createJob(opts: {
     cancelledAt: null,
     items: [],
     effective_mode: opts.degraded ? "degraded" : "normal",
+    batchId: opts.batchId ?? null,
   };
   const parsedAt = opts.createdAt + QUEUED_MS + PARSING_MS;
   const nonEmpty = opts.rows.filter((r) => r.some((c) => c.trim()));
@@ -411,6 +431,121 @@ const evalView = (r: EvalRec) => {
   };
 };
 
+/**
+ * Проверяет тело POST /jobs (или одного элемента jobs в POST /batches) и готовит данные для createJob.
+ * Ничего не создаёт — атомарность комплекта решает вызывающий код.
+ */
+function prepareJob(body: unknown):
+  | { error: { status: number; code: string; message: string; details: Record<string, unknown> | null } }
+  | {
+      data: {
+        f: FileRec;
+        headers: string[];
+        rows: string[][];
+        mapping: ColumnMappingEntry[];
+        header_row: number;
+        degraded: boolean;
+      };
+    } {
+  const b = body as {
+    file_id?: string;
+    column_mapping?: ColumnMappingEntry[];
+    sheet?: string | null;
+    header_row?: number;
+    options?: { use_llm?: boolean };
+  };
+  if (!b?.file_id || !Array.isArray(b.column_mapping))
+    return {
+      error: {
+        status: 400,
+        code: "invalid_request",
+        message: "Некорректный запрос: нужны поля file_id и column_mapping.",
+        details: { field: "file_id" },
+      },
+    };
+  const f = files.get(b.file_id);
+  if (!f)
+    return {
+      error: {
+        status: 404,
+        code: "not_found",
+        message: "Файл не найден. Загрузите его ещё раз.",
+        details: { object: "file" },
+      },
+    };
+  const mapping = b.column_mapping;
+  const count = (r: string) => mapping.filter((m) => m.role === r).length;
+  if (count("name") !== 1)
+    return {
+      error: {
+        status: 422,
+        code: "mapping_invalid",
+        message: "Выберите ровно одну колонку с наименованием товара.",
+        details: null,
+      },
+    };
+  if (count("quantity") > 1 || count("unit") > 1)
+    return {
+      error: {
+        status: 422,
+        code: "mapping_invalid",
+        message: "Колонка количества и колонка единиц измерения — не больше одной каждая.",
+        details: null,
+      },
+    };
+  const sheet = f.sheets.find((s) => s.name === b.sheet) ?? f.sheets[0];
+  const header_row = b.header_row ?? detectHeaderRow(sheet.rows);
+  const headers = sheet.rows[header_row] ?? [];
+  const rows = sheet.rows.slice(header_row + 1);
+  const nonEmpty = rows.filter((r) => r.some((c) => c.trim())).length;
+  if (nonEmpty > LIMITS.max_items_per_job)
+    return {
+      error: {
+        status: 422,
+        code: "limit_exceeded",
+        message: `В файле больше ${LIMITS.max_items_per_job} позиций. Разбейте его на части.`,
+        details: { max_items_per_job: LIMITS.max_items_per_job, found: nonEmpty },
+      },
+    };
+  return { data: { f, headers, rows, mapping, header_row, degraded: b.options?.use_llm === true } };
+}
+
+function batchView(batch: BatchRec): Batch {
+  const jobViews = batch.jobIds.map((id) => jobView(jobs.get(id)!));
+  const total = jobViews.reduce((s, j) => s + j.total_items, 0);
+  const processed = jobViews.reduce((s, j) => s + j.processed_items, 0);
+  const failed = jobViews.reduce((s, j) => s + j.failed_items, 0);
+  const summary = { green: 0, yellow: 0, red: 0, confirmed: 0, corrected: 0, missing_required: 0 };
+  for (const j of jobViews) {
+    summary.green += j.summary.green ?? 0;
+    summary.yellow += j.summary.yellow ?? 0;
+    summary.red += j.summary.red ?? 0;
+    summary.confirmed += j.summary.confirmed ?? 0;
+    summary.corrected += j.summary.corrected ?? 0;
+    summary.missing_required += j.summary.missing_required ?? 0;
+  }
+  const active = jobViews.some((j) => ["queued", "parsing", "processing"].includes(j.status));
+  let status: BatchStatus;
+  if (active) status = "processing";
+  else if (jobViews.every((j) => j.status === "done")) status = "done";
+  else if (jobViews.every((j) => j.status === "failed")) status = "failed";
+  else if (jobViews.every((j) => j.status === "cancelled")) status = "cancelled";
+  else status = "done_with_errors";
+  return {
+    batch_id: batch.batch_id,
+    name: batch.name,
+    status,
+    total_items: total,
+    processed_items: processed,
+    failed_items: failed,
+    progress: total ? (processed + failed) / total : 0,
+    eta_seconds: jobViews.find((j) => j.eta_seconds != null)?.eta_seconds ?? null,
+    summary,
+    jobs: jobViews,
+    created_at: iso(batch.createdAt),
+  };
+}
+
 const routes: [string, string, Handler][] = [
   [
     "GET",
@@ -509,40 +644,86 @@ const routes: [string, string, Handler][] = [
     "/jobs",
     async ({ req }) => {
       const body = await req.json().catch(() => null);
-      if (!body?.file_id || !Array.isArray(body.column_mapping))
-        return err(400, "invalid_request", "Некорректный запрос: нужны поля file_id и column_mapping.");
-      const f = files.get(body.file_id);
-      if (!f) return notFound("file", "Файл не найден. Загрузите его ещё раз.");
-      const mapping: ColumnMappingEntry[] = body.column_mapping;
-      const count = (r: string) => mapping.filter((m) => m.role === r).length;
-      if (count("name") !== 1)
-        return err(422, "mapping_invalid", "Выберите ровно одну колонку с наименованием товара.");
-      if (count("quantity") > 1 || count("unit") > 1)
-        return err(422, "mapping_invalid", "Колонка количества и колонка единиц измерения — не больше одной каждая.");
-      const sheet = f.sheets.find((s) => s.name === body.sheet) ?? f.sheets[0];
-      const header_row = body.header_row ?? detectHeaderRow(sheet.rows);
-      const headers = sheet.rows[header_row] ?? [];
-      const rows = sheet.rows.slice(header_row + 1);
-      const nonEmpty = rows.filter((r) => r.some((c) => c.trim())).length;
-      if (nonEmpty > LIMITS.max_items_per_job)
-        return err(
-          422,
-          "limit_exceeded",
-          `В файле больше ${LIMITS.max_items_per_job} позиций. Разбейте его на части.`,
-          { max_items_per_job: LIMITS.max_items_per_job, found: nonEmpty },
-        );
+      const p = prepareJob(body);
+      if ("error" in p) return err(p.error.status, p.error.code, p.error.message, p.error.details);
+      // degraded — LLM просили, но она недоступна (в демо LLM выключена всегда).
       const job = createJob({
-        // degraded — LLM просили, но она недоступна (в демо LLM выключена всегда).
-        file: f,
-        headers,
-        rows,
-        mapping,
+        file: p.data.f,
+        headers: p.data.headers,
+        rows: p.data.rows,
+        mapping: p.data.mapping,
         createdAt: Date.now(),
-        degraded: body.options?.use_llm === true,
+        degraded: p.data.degraded,
       });
-      shaToJob.set(f.sha, job.job_id);
-      layouts.set(headerHash(headers), { header_row, column_mapping: mapping });
+      shaToJob.set(p.data.f.sha, job.job_id);
+      layouts.set(headerHash(p.data.headers), { header_row: p.data.header_row, column_mapping: p.data.mapping });
       return json(jobView(job), 202);
+    },
+  ],
+
+  [
+    "POST",
+    "/batches",
+    async ({ req }) => {
+      const body = await req.json().catch(() => null);
+      if (!body?.jobs || !Array.isArray(body.jobs) || body.jobs.length === 0)
+        return err(400, "invalid_request", "Некорректный запрос: нужен непустой список jobs.", { field: "jobs" });
+      if (body.jobs.length > LIMITS.max_files_per_batch)
+        return err(422, "limit_exceeded", `Не больше ${LIMITS.max_files_per_batch} файлов в одном комплекте.`, {
+          max_files_per_batch: LIMITS.max_files_per_batch,
+          found: body.jobs.length,
+        });
+      type Prepared = Extract<ReturnType<typeof prepareJob>, { data: unknown }>["data"];
+      const prepared: Prepared[] = [];
+      for (let i = 0; i < body.jobs.length; i++) {
+        const p = prepareJob(body.jobs[i]);
+        if ("error" in p)
+          return err(p.error.status, p.error.code, p.error.message, { ...(p.error.details ?? {}), job_index: i });
+        prepared.push(p.data);
+      }
+      const createdAt = Date.now();
+      const batch: BatchRec = {
+        batch_id: uuid(),
+        name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : null,
+        jobIds: [],
+        createdAt,
+      };
+      for (const d of prepared) {
+        const job = createJob({
+          file: d.f,
+          headers: d.headers,
+          rows: d.rows,
+          mapping: d.mapping,
+          createdAt,
+          degraded: d.degraded,
+          batchId: batch.batch_id,
+        });
+        batch.jobIds.push(job.job_id);
+        shaToJob.set(d.f.sha, job.job_id);
+        layouts.set(headerHash(d.headers), { header_row: d.header_row, column_mapping: d.mapping });
+      }
+      batches.set(batch.batch_id, batch);
+      return json(batchView(batch), 202);
+    },
+  ],
+
+  [
+    "GET",
+    "/batches",
+    ({ url }) => {
+      const page = Number(url.searchParams.get("page") ?? 1);
+      const size = Number(url.searchParams.get("page_size") ?? 50);
+      const all = [...batches.values()].sort((a, b) => b.createdAt - a.createdAt).map(batchView);
+      return json({ items: all.slice((page - 1) * size, page * size), total: all.length, page, page_size: size });
+    },
+  ],
+
+  [
+    "GET",
+    "/batches/:batch_id",
+    ({ params }) => {
+      const b = batches.get(params.batch_id);
+      return b ? json(batchView(b)) : notFound("batch", "Комплект не найден.");
     },
   ],
 
@@ -552,7 +733,9 @@ const routes: [string, string, Handler][] = [
     ({ url }) => {
       const page = Number(url.searchParams.get("page") ?? 1);
       const size = Number(url.searchParams.get("page_size") ?? 50);
-      const all = [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(jobView);
+      const batchId = url.searchParams.get("batch_id");
+      let all = [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).map(jobView);
+      if (batchId) all = all.filter((j) => j.batch_id === batchId);
       return json({ items: all.slice((page - 1) * size, page * size), total: all.length, page, page_size: size });
     },
   ],
@@ -601,7 +784,11 @@ const routes: [string, string, Handler][] = [
       if (!job) return notFound("job", "Задача не найдена.");
       const sp = url.searchParams;
       const page = Number(sp.get("page") ?? 1);
-      const size = Math.min(200, Number(sp.get("page_size") ?? 50));
+      const rawSize = Number(sp.get("page_size") ?? 50);
+      // Контракт: PageSize максимум 200; отвечаем 400, как настоящий бэкенд (не молча режем).
+      if (rawSize > 200)
+        return err(400, "invalid_request", "page_size не может быть больше 200.", { field: "page_size" });
+      const size = rawSize;
       const q = sp.get("q")?.toLowerCase().trim();
       let list = job.items.map(itemView);
       if (sp.get("band")) list = list.filter((v) => v.band === sp.get("band"));
@@ -743,6 +930,117 @@ const routes: [string, string, Handler][] = [
       }
       // В демо xlsx не собираем: отдаём csv, который Excel открывает так же.
       const csv = [[...job.headers, ...extra], ...records].map((r) => r.map(csvCell).join(";")).join("\r\n");
+      return new Response("﻿" + csv, {
+        headers: {
+          ...headers,
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": disposition(`${base}_КТРУ.csv`),
+        },
+      });
+    },
+  ],
+
+  [
+    "GET",
+    "/batches/:batch_id/export",
+    ({ params, url }) => {
+      const batch = batches.get(params.batch_id);
+      if (!batch) return notFound("batch", "Комплект не найден.");
+      const jobViews = batch.jobIds.map((id) => jobView(jobs.get(id)!));
+      if (jobViews.some((j) => ["queued", "parsing", "processing"].includes(j.status)))
+        return err(409, "invalid_state", "Комплект ещё обрабатывается. Дождитесь завершения всех файлов.", {
+          status: "processing",
+        });
+      const format = url.searchParams.get("format") ?? "xlsx";
+      const rows: string[][] = [];
+      const appRows: string[][] = [];
+      let unreviewed = 0;
+      let missingRequired = 0;
+      for (const jv of jobViews) {
+        const jr = jobs.get(jv.job_id)!;
+        const views = jr.items.map(itemView);
+        unreviewed += views.filter((x) => x.status === "processed" || x.status === "needs_review").length;
+        missingRequired += views.filter((x) => (x.missing_required_count ?? 0) > 0).length;
+        if (format !== "application") {
+          // Первая колонка — файл-источник; вместо исходных колонок — текст позиции (raw_text).
+          for (const x of views) {
+            rows.push([jr.filename, x.raw_text, x.final?.ktru_code ?? "", x.final?.name ?? ""]);
+          }
+        } else {
+          for (let i = 0; i < jr.items.length; i++) {
+            const it = jr.items[i];
+            const ch = charView(it);
+            const unit = it.result.extracted?.unit ?? "";
+            if (!ch.ktru_code || ch.characteristics.length === 0) {
+              appRows.push([jr.filename, String(i + 1), it.raw_text, "", "", "", unit, "", ""]);
+              continue;
+            }
+            for (const c of ch.characteristics) {
+              appRows.push([
+                jr.filename,
+                String(i + 1),
+                it.raw_text,
+                ch.ktru_code,
+                c.name,
+                c.value ?? c.found ?? (c.required ? "не заполнено" : ""),
+                unit,
+                c.required ? "да" : "нет",
+                c.value != null ? "пользователь" : c.found != null ? "текст позиции" : "",
+              ]);
+            }
+          }
+        }
+      }
+      const headers = {
+        "X-Unreviewed-Count": String(unreviewed),
+        "X-Missing-Required-Count": String(missingRequired),
+      };
+      const base = (batch.name?.trim() || "комплект").replace(/[\\/:*?"<>|]/g, "-");
+      if (format === "application") {
+        const cols = [
+          "Файл-источник",
+          "№",
+          "Исходное наименование",
+          "Код КТРУ",
+          "Характеристика",
+          "Значение",
+          "Ед.",
+          "Обязательная",
+          "Источник значения",
+        ];
+        const csv = [cols, ...appRows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+        return new Response("﻿" + csv, {
+          headers: {
+            ...headers,
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": disposition(`${base}_заявка.csv`),
+          },
+        });
+      }
+      if (format === "json") {
+        return new Response(
+          JSON.stringify(
+            rows.map((r) =>
+              Object.fromEntries(
+                ["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"].map((c, i) => [c, r[i]]),
+              ),
+            ),
+            null,
+            2,
+          ),
+          {
+            headers: {
+              ...headers,
+              "Content-Type": "application/json",
+              "Content-Disposition": disposition(`${base}_КТРУ.json`),
+            },
+          },
+        );
+      }
+      // В демо xlsx не собираем: отдаём csv, который Excel открывает так же.
+      const csv = [["Файл-источник", "Текст позиции", "Код КТРУ", "Наименование"], ...rows]
+        .map((r) => r.map(csvCell).join(";"))
+        .join("\r\n");
       return new Response("﻿" + csv, {
         headers: {
           ...headers,
