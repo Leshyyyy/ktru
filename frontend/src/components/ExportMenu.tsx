@@ -9,7 +9,7 @@ type Format = "source" | "xlsx" | "csv" | "json" | "application";
 
 type Props = {
   /** Действие выгрузки конкретным форматом; возвращает число незаполненных в выгрузке (для тоста). */
-  onExport: (format: Format) => Promise<{ unreviewed: number; missingRequired: number }> | void;
+  onExport: (format: Format) => Promise<{ unreviewed: number; missingRequired: number } | undefined> | void;
   /** Число позиций с незаполненными обязательными (для предупреждения перед выгрузкой). */
   missing: number;
   disabled: boolean;
